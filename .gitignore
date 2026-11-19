@@ -218,3 +218,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+ml/data/
+ml/models/*.joblib
+*.mp3
+*.wav
+*.flac
+venv/
+.env

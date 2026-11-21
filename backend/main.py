@@ -6,6 +6,7 @@ from pathlib import Path
 import joblib
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import StandardScaler
 
@@ -15,6 +16,10 @@ sys.path.append(str(ML))
 from audio_features import extract  # noqa: E402
 
 app = FastAPI(title="SonicAI API")
+
+app.add_middleware(
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+)
 
 bundle = joblib.load(ML / "models" / "mood_audio.joblib")
 model = bundle["model"]
@@ -51,9 +56,10 @@ def analyze(file: UploadFile = File(...)):
     mood = model.classes_[probs.argmax()]
     mood_probs = {c: round(float(p), 3) for c, p in zip(model.classes_, probs)}
 
-    # Similar songs from your library
+    # Similar songs from your library (skip the uploaded song itself)
     sims = cosine_similarity(scaler.transform(row), catalog_X)[0]
-    top = sims.argsort()[::-1][:3]
+    order = [i for i in sims.argsort()[::-1] if catalog.loc[i, "song"] != file.filename]
+    top = order[:3]
     similar = [
         {"song": catalog.loc[i, "song"], "similarity": round(float(sims[i]), 2)}
         for i in top

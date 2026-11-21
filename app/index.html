@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SonicAI</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f0f14; color: #eee;
+         max-width: 560px; margin: 40px auto; padding: 0 16px; }
+  h1 { margin-bottom: 4px; }
+  .sub { color: #999; margin-bottom: 24px; }
+  .card { background: #1b1b25; border-radius: 14px; padding: 18px; margin-top: 16px; }
+  button { background: #7c5cff; color: #fff; border: 0; padding: 10px 18px;
+           border-radius: 10px; font-size: 15px; cursor: pointer; margin-top: 12px; }
+  button:disabled { opacity: .5; }
+  button.small { padding: 6px 12px; font-size: 13px; margin-top: 0; background: #2b2b3a; }
+  select { background: #2b2b3a; color: #eee; border: 0; padding: 8px 10px;
+           border-radius: 8px; font-size: 14px; }
+  audio { width: 100%; margin-top: 12px; }
+  .now { font-weight: 600; word-break: break-word; }
+  .track { padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px;
+           word-break: break-word; }
+  .track:hover { background: #2b2b3a; }
+  .track.active { background: #7c5cff33; color: #fff; }
+  .mood { font-size: 28px; font-weight: 700; text-transform: capitalize; }
+  .bar { background: #2b2b3a; border-radius: 6px; height: 10px; margin: 4px 0 10px; }
+  .fill { background: #7c5cff; height: 10px; border-radius: 6px; }
+  .row { display: flex; justify-content: space-between; font-size: 14px; }
+  .song { font-size: 14px; padding: 6px 0; border-bottom: 1px solid #2b2b3a; }
+  .eqrow { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 13px; }
+  .eqrow label { width: 52px; color: #aaa; }
+  .eqrow input { flex: 1; accent-color: #7c5cff; }
+  .eqrow span { width: 40px; text-align: right; color: #aaa; }
+  .eqhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  #eqnote { color: #9fe3a6; font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>🎧 SonicAI</h1>
+<div class="sub">Play your music, shape the sound, and let the AI detect its mood.</div>
+
+<div class="card">
+  <input type="file" id="files" accept=".mp3,.wav,.flac" multiple>
+  <div class="now" id="now" style="margin-top:12px">No song selected</div>
+  <audio id="player" controls></audio>
+  <br><button id="go">Analyze this song</button>
+  <div id="status"></div>
+</div>
+
+<div class="card">
+  <div class="eqhead">
+    <b>Equalizer</b>
+    <span>
+      <select id="preset"></select>
+      <button class="small" id="reset">Reset</button>
+    </span>
+  </div>
+  <div id="eq" style="margin-top:10px"></div>
+  <div id="eqnote"></div>
+</div>
+
+<div class="card" id="queueCard" style="display:none">
+  <b>Queue</b>
+  <div id="queue" style="margin-top:8px"></div>
+</div>
+
+<div id="result"></div>
+
+<script>
+const API = "http://127.0.0.1:8000/analyze";
+const player = document.getElementById("player");
+const now = document.getElementById("now");
+const queueEl = document.getElementById("queue");
+const queueCard = document.getElementById("queueCard");
+const go = document.getElementById("go");
+const status = document.getElementById("status");
+const result = document.getElementById("result");
+const eqEl = document.getElementById("eq");
+const presetEl = document.getElementById("preset");
+const eqNote = document.getElementById("eqnote");
+
+let tracks = [];
+let current = -1;
+
+// ---------- Equalizer ----------
+const BANDS = [
+  { f: 60,    t: "lowshelf",  label: "60 Hz" },
+  { f: 170,   t: "peaking",   label: "170 Hz" },
+  { f: 500,   t: "peaking",   label: "500 Hz" },
+  { f: 1500,  t: "peaking",   label: "1.5 kHz" },
+  { f: 4000,  t: "peaking",   label: "4 kHz" },
+  { f: 10000, t: "highshelf", label: "10 kHz" },
+];
+
+const PRESETS = {
+  "Flat":       [0, 0, 0, 0, 0, 0],
+  "Bass Boost": [8, 6, 2, 0, 0, 0],
+  "Vocal":      [-2, -1, 2, 4, 3, 0],
+  "Rock":       [5, 3, -1, -1, 3, 5],
+  "Classical":  [3, 2, 0, 0, 2, 3],
+  "Dance":      [6, 4, 0, 2, 3, 2],
+  "Chill":      [2, 2, 0, -1, -2, -3],
+  "Gaming":     [3, 0, -1, 2, 4, 3],
+  "Podcast":    [-4, -1, 3, 4, 2, -2],
+};
+
+// AI EQ: mood -> preset
+const MOOD_PRESET = { energetic: "Dance", intense: "Rock", calm: "Chill", sad: "Vocal" };
+
+let ctx = null;
+const filters = [];
+const sliders = [];
+const valueLabels = [];
+
+Object.keys(PRESETS).concat("Custom").forEach(name => {
+  const o = document.createElement("option");
+  o.value = name; o.textContent = name;
+  presetEl.appendChild(o);
+});
+
+BANDS.forEach((b, i) => {
+  const row = document.createElement("div");
+  row.className = "eqrow";
+  row.innerHTML = `<label>${b.label}</label>
+    <input type="range" min="-12" max="12" step="1" value="0">
+    <span>0 dB</span>`;
+  const slider = row.querySelector("input");
+  const val = row.querySelector("span");
+  slider.oninput = () => {
+    val.textContent = slider.value + " dB";
+    if (filters[i]) filters[i].gain.value = +slider.value;
+    presetEl.value = "Custom";
+    eqNote.textContent = "";
+  };
+  sliders.push(slider);
+  valueLabels.push(val);
+  eqEl.appendChild(row);
+});
+
+function applyPreset(name) {
+  const gains = PRESETS[name];
+  if (!gains) return;
+  gains.forEach((g, i) => {
+    sliders[i].value = g;
+    valueLabels[i].textContent = g + " dB";
+    if (filters[i]) filters[i].gain.value = g;
+  });
+  presetEl.value = name;
+}
+
+presetEl.onchange = () => { applyPreset(presetEl.value); eqNote.textContent = ""; };
+document.getElementById("reset").onclick = () => { applyPreset("Flat"); eqNote.textContent = ""; };
+
+function setupAudio() {
+  if (ctx) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  let node = ctx.createMediaElementSource(player);
+  BANDS.forEach((b, i) => {
+    const fl = ctx.createBiquadFilter();
+    fl.type = b.t;
+    fl.frequency.value = b.f;
+    if (b.t === "peaking") fl.Q.value = 1;
+    fl.gain.value = +sliders[i].value;
+    node.connect(fl);
+    node = fl;
+    filters.push(fl);
+  });
+  node.connect(ctx.destination);
+}
+
+// ---------- Player ----------
+document.getElementById("files").onchange = (e) => {
+  tracks = Array.from(e.target.files);
+  if (!tracks.length) return;
+  queueCard.style.display = "block";
+  result.innerHTML = "";
+  status.textContent = "";
+  renderQueue();
+  play(0);
+};
+
+function renderQueue() {
+  queueEl.innerHTML = "";
+  tracks.forEach((f, i) => {
+    const d = document.createElement("div");
+    d.className = "track" + (i === current ? " active" : "");
+    d.textContent = (i + 1) + ". " + f.name;
+    d.onclick = () => play(i);
+    queueEl.appendChild(d);
+  });
+}
+
+function play(i) {
+  setupAudio();
+  if (ctx.state === "suspended") ctx.resume();
+  if (player.src) URL.revokeObjectURL(player.src);
+  current = i;
+  player.src = URL.createObjectURL(tracks[i]);
+  player.play();
+  now.textContent = "Now playing: " + tracks[i].name;
+  result.innerHTML = "";
+  status.textContent = "";
+  eqNote.textContent = "";
+  renderQueue();
+}
+
+player.onended = () => {
+  if (current + 1 < tracks.length) play(current + 1);
+};
+
+// ---------- Analyze ----------
+go.onclick = async () => {
+  if (current < 0) { status.textContent = "Choose songs first."; return; }
+  go.disabled = true;
+  status.textContent = "Analyzing... (10-20 seconds)";
+  result.innerHTML = "";
+  try {
+    const fd = new FormData();
+    fd.append("file", tracks[current]);
+    const res = await fetch(API, { method: "POST", body: fd });
+    if (!res.ok) throw new Error("Server error " + res.status);
+    show(await res.json());
+    status.textContent = "";
+  } catch (e) {
+    status.textContent = "Error: " + e.message + " (is the server running?)";
+  }
+  go.disabled = false;
+};
+
+function show(d) {
+  const bars = Object.entries(d.mood_probabilities)
+    .sort((a, b) => b[1] - a[1])
+    .map(([m, p]) => `<div class="row"><span>${m}</span><span>${Math.round(p*100)}%</span></div>
+      <div class="bar"><div class="fill" style="width:${p*100}%"></div></div>`).join("");
+  const sims = d.similar_songs
+    .map(s => `<div class="song">${s.song}<br><small>similarity ${s.similarity}</small></div>`).join("");
+  result.innerHTML = `
+    <div class="card"><div class="mood">${d.mood}</div>
+      <div style="color:#999">${d.tempo_bpm} BPM</div></div>
+    <div class="card"><b>Mood breakdown</b><div style="margin-top:10px">${bars}</div></div>
+    <div class="card"><b>Similar songs in your library</b>${sims}</div>`;
+
+  // AI EQ: pick a preset from the detected mood
+  const preset = MOOD_PRESET[d.mood];
+  if (preset) {
+    applyPreset(preset);
+    eqNote.textContent = "AI EQ applied: " + preset + " (detected mood: " + d.mood + ")";
+  }
+}
+</script>
+</body>
+</html>

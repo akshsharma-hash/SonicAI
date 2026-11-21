@@ -14,8 +14,9 @@
            border-radius: 10px; font-size: 15px; cursor: pointer; margin-top: 12px; }
   button:disabled { opacity: .5; }
   button.small { padding: 6px 12px; font-size: 13px; margin-top: 0; background: #2b2b3a; }
-  select { background: #2b2b3a; color: #eee; border: 0; padding: 8px 10px;
+  select, input[type=text] { background: #2b2b3a; color: #eee; border: 0; padding: 10px;
            border-radius: 8px; font-size: 14px; }
+  input[type=text] { width: 100%; box-sizing: border-box; margin-top: 10px; }
   audio { width: 100%; margin-top: 12px; }
   .now { font-weight: 600; word-break: break-word; }
   .track { padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px;
@@ -33,16 +34,29 @@
   .eqrow span { width: 40px; text-align: right; color: #aaa; }
   .eqhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   #eqnote { color: #9fe3a6; font-size: 13px; margin-top: 8px; }
+  #pinfo { color: #9fe3a6; font-size: 13px; margin-top: 10px; }
+  #pstatus { color: #ffb86b; font-size: 13px; margin-top: 8px; }
 </style>
 </head>
 <body>
 <h1>🎧 SonicAI</h1>
-<div class="sub">Play your music, shape the sound, and let the AI detect its mood.</div>
+<div class="sub">Play your music, shape the sound, and let the AI understand it.</div>
+
+<div class="card">
+  <b>Smart playlist</b>
+  <div style="color:#999;font-size:13px;margin-top:4px">
+    Try: "45 minute energetic workout" or "calm songs for studying"
+  </div>
+  <input type="text" id="pq" placeholder="Describe the playlist you want">
+  <button id="mk">Create playlist</button>
+  <div id="pinfo"></div>
+  <div id="pstatus"></div>
+</div>
 
 <div class="card">
   <input type="file" id="files" accept=".mp3,.wav,.flac" multiple>
   <div class="now" id="now" style="margin-top:12px">No song selected</div>
-  <audio id="player" controls></audio>
+  <audio id="player" controls crossorigin="anonymous"></audio>
   <br><button id="go">Analyze this song</button>
   <div id="status"></div>
 </div>
@@ -67,7 +81,8 @@
 <div id="result"></div>
 
 <script>
-const API = "http://127.0.0.1:8000/analyze";
+const BASE = "http://127.0.0.1:8000";
+const API = BASE + "/analyze";
 const player = document.getElementById("player");
 const now = document.getElementById("now");
 const queueEl = document.getElementById("queue");
@@ -79,6 +94,7 @@ const eqEl = document.getElementById("eq");
 const presetEl = document.getElementById("preset");
 const eqNote = document.getElementById("eqnote");
 
+// each track is { name, file } (chosen from your computer) or { name, url } (from the library)
 let tracks = [];
 let current = -1;
 
@@ -170,21 +186,25 @@ function setupAudio() {
 
 // ---------- Player ----------
 document.getElementById("files").onchange = (e) => {
-  tracks = Array.from(e.target.files);
+  tracks = Array.from(e.target.files).map(f => ({ name: f.name, file: f }));
   if (!tracks.length) return;
+  startQueue();
+};
+
+function startQueue() {
   queueCard.style.display = "block";
   result.innerHTML = "";
   status.textContent = "";
   renderQueue();
   play(0);
-};
+}
 
 function renderQueue() {
   queueEl.innerHTML = "";
-  tracks.forEach((f, i) => {
+  tracks.forEach((t, i) => {
     const d = document.createElement("div");
     d.className = "track" + (i === current ? " active" : "");
-    d.textContent = (i + 1) + ". " + f.name;
+    d.textContent = (i + 1) + ". " + t.name;
     d.onclick = () => play(i);
     queueEl.appendChild(d);
   });
@@ -193,11 +213,12 @@ function renderQueue() {
 function play(i) {
   setupAudio();
   if (ctx.state === "suspended") ctx.resume();
-  if (player.src) URL.revokeObjectURL(player.src);
+  if (player.src && player.src.startsWith("blob:")) URL.revokeObjectURL(player.src);
   current = i;
-  player.src = URL.createObjectURL(tracks[i]);
+  const t = tracks[i];
+  player.src = t.file ? URL.createObjectURL(t.file) : t.url;
   player.play();
-  now.textContent = "Now playing: " + tracks[i].name;
+  now.textContent = "Now playing: " + t.name;
   result.innerHTML = "";
   status.textContent = "";
   eqNote.textContent = "";
@@ -208,15 +229,47 @@ player.onended = () => {
   if (current + 1 < tracks.length) play(current + 1);
 };
 
+// ---------- Smart playlist ----------
+const pq = document.getElementById("pq");
+const mk = document.getElementById("mk");
+const pinfo = document.getElementById("pinfo");
+const pstatus = document.getElementById("pstatus");
+
+async function makePlaylist() {
+  const q = pq.value.trim();
+  if (!q) { pstatus.textContent = "Type what kind of playlist you want."; return; }
+  mk.disabled = true;
+  pstatus.textContent = "Creating playlist...";
+  pinfo.textContent = "";
+  try {
+    const res = await fetch(BASE + "/playlist?q=" + encodeURIComponent(q));
+    if (!res.ok) throw new Error("Server error " + res.status);
+    const d = await res.json();
+    pstatus.textContent = d.note || "";
+    if (!d.songs.length) { mk.disabled = false; return; }
+    pinfo.textContent = "Detected: " + d.detected_moods.join(", ") +
+      " · " + d.total_minutes + " min · " + d.songs.length + " songs";
+    tracks = d.songs.map(s => ({ name: s.song, url: BASE + s.url }));
+    startQueue();
+  } catch (e) {
+    pstatus.textContent = "Error: " + e.message + " (is the server running?)";
+  }
+  mk.disabled = false;
+}
+mk.onclick = makePlaylist;
+pq.onkeydown = (e) => { if (e.key === "Enter") makePlaylist(); };
+
 // ---------- Analyze ----------
 go.onclick = async () => {
-  if (current < 0) { status.textContent = "Choose songs first."; return; }
+  if (current < 0) { status.textContent = "Choose songs or create a playlist first."; return; }
   go.disabled = true;
   status.textContent = "Analyzing... (10-20 seconds)";
   result.innerHTML = "";
   try {
+    const t = tracks[current];
+    const blob = t.file || await (await fetch(t.url)).blob();
     const fd = new FormData();
-    fd.append("file", tracks[current]);
+    fd.append("file", blob, t.name);
     const res = await fetch(API, { method: "POST", body: fd });
     if (!res.ok) throw new Error("Server error " + res.status);
     show(await res.json());

@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SonicAI Video Maker</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f0f14; color: #eee;
+         max-width: 520px; margin: 40px auto; padding: 0 16px 60px; }
+  h1 { margin-bottom: 4px; }
+  .sub { color: #999; margin-bottom: 20px; }
+  .card { background: #1b1b25; border-radius: 14px; padding: 18px; margin-top: 14px; }
+  button { background: #7c5cff; color: #fff; border: 0; padding: 12px 22px; border-radius: 10px;
+           font-size: 16px; cursor: pointer; margin-top: 12px; margin-right: 8px; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.alt { background: #2b2b3a; }
+  select, input[type=number] { background: #2b2b3a; color: #eee; border: 0; padding: 9px; border-radius: 8px; font-size: 14px; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 130px; background: #2b2b3a; color: #eee;
+             border: 0; border-radius: 8px; padding: 10px; font-size: 14px; margin-top: 8px; }
+  .muted { color: #999; font-size: 13px; margin-top: 6px; }
+  .ok { color: #9fe3a6; font-size: 13px; margin-top: 8px; }
+  #msg { color: #ffb86b; font-size: 14px; margin-top: 10px; min-height: 18px; }
+  #thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  #thumbs .t { position: relative; width: 56px; height: 56px; border-radius: 8px; background: #2b2b3a; overflow: hidden;
+               display: flex; align-items: center; justify-content: center; }
+  #thumbs img { width: 100%; height: 100%; object-fit: cover; }
+  #thumbs b { position: absolute; left: 3px; top: 1px; font-size: 11px; background: #000a; padding: 0 4px; border-radius: 4px; }
+  canvas { width: 100%; max-width: 300px; display: block; margin: 14px auto 0; border-radius: 12px; background: #000; }
+  a.dl { display: inline-block; background: #7c5cff; color: #fff; padding: 12px 22px; border-radius: 10px;
+         text-decoration: none; margin-top: 10px; }
+</style>
+</head>
+<body>
+<h1>🎬 SonicAI Video Maker</h1>
+<div class="sub">Song + lines + pictures = a lyric video. Just 4 steps.</div>
+
+<div class="card">
+  <b>1. Choose the song</b>
+  <div class="muted">Use only music and lyrics you own or have the rights to use.</div>
+  <input type="file" id="songFile" accept=".mp3,.wav,.flac" style="margin-top:8px">
+</div>
+
+<div class="card">
+  <b>2. Paste the lines you want</b>
+  <div class="muted">4 to 8 lines work best, one line per row.</div>
+  <textarea id="lyrics" placeholder="Paste the lyric lines here"></textarea>
+  <div class="muted">Optional: start the video at second
+    <input type="number" id="startAt" min="0" step="0.5" placeholder="AI picks" style="width:90px">
+    (type the second where your first line is sung)</div>
+</div>
+
+<div class="card">
+  <b>3. Choose pictures</b>
+  <div class="muted">AI-generated or your own. Picture 1 goes with line 1, picture 2 with line 2, and so on.</div>
+  <input type="file" id="pics" accept="image/*,video/*" multiple style="margin-top:8px">
+  <div id="thumbs"></div>
+  <div class="ok" id="pcount"></div>
+</div>
+
+<div class="card">
+  <b>4. Make the video</b>
+  <div style="margin-top:8px">
+    <select id="tstyle"><option>Paper strips</option><option>Bold caption</option></select>
+    <span class="muted">text style</span>
+  </div>
+  <button id="make">Make video</button>
+  <button id="stop" class="alt" disabled>Stop</button>
+  <canvas id="cv" width="540" height="960"></canvas>
+  <div id="msg"></div>
+</div>
+
+<div class="card" id="outCard" style="display:none">
+  <b>Your video</b>
+  <div id="out"></div>
+</div>
+
+<script>
+const BASE = location.protocol === "file:" ? "http://127.0.0.1:8000" : location.origin;
+const $ = id => document.getElementById(id);
+const canvas = $("cv");
+const ctx = canvas.getContext("2d");
+const W = 540, H = 960;
+const SERIF = "Georgia, 'Nirmala UI', 'Noto Serif Devanagari', 'Noto Serif Gurmukhi', serif";
+const SANS = "Impact, 'Arial Black', 'Nirmala UI', sans-serif";
+const MOTIONS = ["Push in", "Pan left", "Pull out", "Pan right", "Drift"];
+const TD = { "Whip": 0.5, "Fade": 0.6, "Zoom through": 0.7 };
+
+let song = null, info = null, infoFor = null, media = [], run = null, runId = 0;
+
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const ease = p => p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+const easeOutBack = x => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+function setMsg(t) { $("msg").textContent = t || ""; }
+function lastIdx(arr, t) {
+  let lo = 0, hi = arr.length - 1, r = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (arr[m] <= t) { r = m; lo = m + 1; } else hi = m - 1; }
+  return r;
+}
+function idle() {
+  ctx.fillStyle = "#111"; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#777"; ctx.font = "26px sans-serif"; ctx.textAlign = "center";
+  ctx.fillText("Your video appears here", W / 2, H / 2);
+}
+idle();
+
+// ---------- Step 1 and 3: files ----------
+$("songFile").onchange = () => { song = $("songFile").files[0] || null; info = null; infoFor = null; };
+
+$("pics").onchange = async () => {
+  media.forEach(m => URL.revokeObjectURL(m.url));
+  media = [];
+  $("thumbs").innerHTML = "";
+  $("pcount").textContent = "Loading...";
+  for (const f of Array.from($("pics").files)) {
+    const url = URL.createObjectURL(f);
+    let item = null;
+    if (f.type.startsWith("video/")) {
+      const v = document.createElement("video");
+      v.muted = true; v.loop = true; v.playsInline = true; v.preload = "auto";
+      await new Promise(r => { v.onloadeddata = r; v.onerror = r; v.src = url; });
+      item = { type: "video", el: v, url };
+    } else {
+      const im = new Image();
+      im.src = url;
+      try { await im.decode(); item = { type: "img", el: im, url }; } catch (e) { URL.revokeObjectURL(url); }
+    }
+    if (item) {
+      media.push(item);
+      const t = document.createElement("div");
+      t.className = "t";
+      t.innerHTML = (item.type === "img" ? `<img src="${url}">` : "🎞") + `<b>${media.length}</b>`;
+      $("thumbs").appendChild(t);
+    }
+  }
+  $("pcount").textContent = media.length + " picture(s) ready";
+};
+
+// ---------- Lyrics ----------
+function parseLines(text) {
+  const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const timed = [];
+  for (const l of lines) {
+    const m = l.match(/^\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)$/);
+    if (m && m[3]) timed.push({ t: +m[1] * 60 + +m[2], text: m[3] });
+  }
+  if (timed.length >= 2) return { timed: timed.sort((a, b) => a.t - b.t) };
+  const plain = lines.map(l => l.replace(/^\[\d+:\d+(?:\.\d+)?\]\s*/, "")).filter(l => l && !/^\[.*\]$/.test(l));
+  return { plain };
+}
+
+function alignLines(lines, start, len, beats) {
+  const end = start + len;
+  const bs = beats.filter(b => b >= start && b < end);
+  const w = lines.map(l => Math.max(10, l.length));
+  const tot = w.reduce((a, b) => a + b, 0) || 1;
+  let acc = 0, prev = -1;
+  return lines.map((text, i) => {
+    let t = start + (acc / tot) * len;
+    acc += w[i];
+    if (bs.length) {
+      let best = 0, bd = Infinity;
+      bs.forEach((b, j) => { const d = Math.abs(b - t); if (d < bd) { bd = d; best = j; } });
+      if (best <= prev) best = Math.min(prev + 1, bs.length - 1);
+      prev = best;
+      t = bs[best];
+    }
+    return { t, text };
+  });
+}
+
+// ---------- Drawing ----------
+function wrap(text, maxW) {
+  const words = text.split(/\s+/), lines = [];
+  let cur = "";
+  for (const w of words) {
+    const t = cur ? cur + " " + w : w;
+    if (ctx.measureText(t).width > maxW && cur) { lines.push(cur); cur = w; } else cur = t;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+function rnd(n) { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+function tornRect(w, h, seed) {
+  const pts = [], st = 16;
+  for (let x = -w / 2; x <= w / 2; x += st) pts.push([x, -h / 2 + (rnd(seed + x) - 0.5) * 5]);
+  for (let y = -h / 2; y <= h / 2; y += st) pts.push([w / 2 + (rnd(seed + y + 99) - 0.5) * 5, y]);
+  for (let x = w / 2; x >= -w / 2; x -= st) pts.push([x, h / 2 + (rnd(seed + x + 199) - 0.5) * 5]);
+  for (let y = h / 2; y >= -h / 2; y -= st) pts.push([-w / 2 + (rnd(seed + y + 299) - 0.5) * 5, y]);
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+  ctx.closePath();
+}
+
+function drawMedia(sc, q, ex, R) {
+  ex = ex || {};
+  ctx.save();
+  ctx.globalAlpha = ex.alpha === undefined ? 1 : ex.alpha;
+  ctx.translate(W / 2 + (ex.tx || 0), H / 2);
+  if (ex.rot) ctx.rotate(ex.rot);
+  let z = (ex.scale || 1) * (1 + 0.012 * R.dec), px = 0, py = 0;
+  switch (sc.motion) {
+    case "Push in":  z *= 1 + 0.18 * q; break;
+    case "Pull out": z *= 1.18 - 0.18 * q; break;
+    case "Pan left": z *= 1.16; px = W * 0.06 * (1 - 2 * q); break;
+    case "Pan right": z *= 1.16; px = -W * 0.06 * (1 - 2 * q); break;
+    case "Drift": z *= 1.1; px = Math.sin(q * 3.1) * W * 0.025; py = Math.cos(q * 2.3) * H * 0.02; break;
+  }
+  ctx.translate(px, py);
+  ctx.scale(z, z);
+  const m = sc.media;
+  if (m) {
+    const el = m.el;
+    const iw = m.type === "video" ? el.videoWidth : el.naturalWidth;
+    const ih = m.type === "video" ? el.videoHeight : el.naturalHeight;
+    if (iw && ih) {
+      const s = Math.max(W / iw, H / ih);
+      ctx.drawImage(el, -iw * s / 2, -ih * s / 2, iw * s, ih * s);
+    }
+  } else {
+    const hue = (sc.seed * 37) % 360;
+    const g = ctx.createLinearGradient(-W / 2, -H / 2, W / 2, H / 2);
+    g.addColorStop(0, `hsl(${hue},45%,28%)`);
+    g.addColorStop(1, `hsl(${(hue + 50) % 360},50%,16%)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(-W, -H, W * 2, H * 2);
+  }
+  ctx.restore();
+}
+
+function transition(tr, prev, sc, q, p, R) {
+  const e = ease(p);
+  if (tr === "Fade") {
+    drawMedia(prev, 1, null, R);
+    drawMedia(sc, q, { alpha: e }, R);
+  } else if (tr === "Whip") {
+    const dir = W * 1.1;
+    for (let g = 3; g >= 0; g--) drawMedia(prev, 1, { tx: -e * dir - g * 26, alpha: g ? 0.2 : 1 }, R);
+    for (let g = 3; g >= 0; g--) drawMedia(sc, q, { tx: (1 - e) * dir + g * 26, alpha: g ? 0.2 : 1 }, R);
+  } else {
+    drawMedia(sc, q, { scale: 0.7 + 0.3 * e }, R);
+    drawMedia(prev, 1, { scale: 1 + e * 2.4, alpha: 1 - e }, R);
+  }
+}
+
+function drawLook() {
+  ctx.fillStyle = "rgba(255,170,90,0.12)"; ctx.fillRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(W / 2, H / 2, W * 0.3, W / 2, H / 2, H * 0.75);
+  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.35)");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 40; i++) {
+    ctx.fillStyle = Math.random() < 0.5 ? "rgba(255,255,255,.09)" : "rgba(0,0,0,.13)";
+    ctx.fillRect(Math.random() * W, Math.random() * H, 2, 2);
+  }
+}
+
+function drawText(sc, tt, dur) {
+  const out = clamp((dur - tt) / 0.25);
+  const rowY = (n, rh, i) => H * 0.82 - (n - 1) * rh + i * rh;
+  ctx.textBaseline = "middle";
+  if ($("tstyle").value === "Paper strips") {
+    const fs = Math.round(W * 0.062);
+    ctx.font = `700 ${fs}px ${SERIF}`;
+    const rows = wrap(sc.text, W * 0.74).slice(0, 4), rh = fs * 1.75;
+    rows.forEach((row, i) => {
+      const p = clamp((tt - 0.12 - 0.13 * i) / 0.4);
+      if (p <= 0) return;
+      const e = easeOutBack(p);
+      const w = ctx.measureText(row).width + fs * 1.4, h = fs * 1.5;
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, p * 2) * out;
+      ctx.translate(W / 2 + (i % 2 ? 1 : -1) * fs * 0.3, rowY(rows.length, rh, i) + (1 - e) * -70);
+      ctx.rotate((((sc.seed + i * 7) % 7) - 3) * 0.012);
+      ctx.shadowColor = "rgba(0,0,0,.35)"; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4;
+      ctx.fillStyle = "#f3e8cf";
+      tornRect(w, h, sc.seed + i * 31);
+      ctx.fill();
+      ctx.shadowColor = "transparent";
+      ctx.fillStyle = "#2b2118"; ctx.textAlign = "center";
+      ctx.fillText(row, 0, 2);
+      ctx.restore();
+    });
+  } else {
+    const fs = Math.round(W * 0.085);
+    ctx.font = `900 ${fs}px ${SANS}`;
+    const rows = wrap(sc.text.toUpperCase(), W * 0.8).slice(0, 3), rh = fs * 1.2;
+    const sca = 0.6 + 0.4 * easeOutBack(clamp(tt / 0.25));
+    ctx.save();
+    ctx.globalAlpha = out; ctx.textAlign = "center"; ctx.lineJoin = "round";
+    ctx.lineWidth = fs * 0.14; ctx.strokeStyle = "#000"; ctx.fillStyle = "#fff";
+    rows.forEach((row, i) => {
+      ctx.save();
+      ctx.translate(W / 2, rowY(rows.length, rh, i));
+      ctx.scale(sca, sca);
+      ctx.strokeText(row, 0, 0); ctx.fillText(row, 0, 0);
+      ctx.restore();
+    });
+    ctx.restore();
+  }
+}
+
+function syncVideos(L, i) {
+  L.forEach((s, j) => {
+    const m = s.media;
+    if (!m || m.type !== "video") return;
+    if (j === i) { try { m.el.currentTime = 0; } catch (e) {} m.el.play().catch(() => {}); }
+    else if (j !== i - 1) m.el.pause();
+  });
+}
+
+function draw(now, R) {
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+  const L = R.list;
+  let i = lastIdx(R.starts, now);
+  const pre = i < 0;
+  if (pre) i = 0;
+  const sc = L[i], end = R.ends[i];
+  const tin = pre ? 0 : now - sc.start;
+  const q = clamp(tin / Math.max(0.3, end - sc.start));
+  const bi = lastIdx(R.beats, now);
+  R.dec = bi >= 0 ? Math.exp(-(now - R.beats[bi]) * 7) * 0.7 : 0;
+  if (R.active !== i) { syncVideos(L, i); R.active = i; }
+
+  const D = TD[sc.trans] || 0, prev = i > 0 ? L[i - 1] : null;
+  if (pre || !prev || tin >= D) drawMedia(sc, q, null, R);
+  else transition(sc.trans, prev, sc, q, clamp(tin / D), R);
+
+  drawLook();
+  drawText(sc, tin, end - sc.start);
+
+  ctx.globalAlpha = 1;
+  ctx.font = "13px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = "rgba(255,255,255,.5)";
+  ctx.fillText("Made with SonicAI", W / 2, H - 16);
+  const fade = Math.min(clamp((now - R.from) / 0.5), clamp((R.to - now) / 0.7));
+  if (fade < 1) { ctx.fillStyle = "rgba(0,0,0," + (1 - fade) + ")"; ctx.fillRect(0, 0, W, H); }
+}
+
+// ---------- Recording ----------
+function pickMime() {
+  if (!window.MediaRecorder) return "";
+  const c = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4",
+             "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+  return c.find(m => MediaRecorder.isTypeSupported(m)) || "";
+}
+function setBusy(b) { $("make").disabled = b; $("stop").disabled = !b; $("pics").disabled = b; $("songFile").disabled = b; }
+
+function cleanup(r) {
+  cancelAnimationFrame(r.raf);
+  try { r.audio.pause(); } catch (e) {}
+  media.forEach(m => m.type === "video" && m.el.pause());
+  setTimeout(() => { try { r.ac.close(); } catch (e) {} }, 600);
+  URL.revokeObjectURL(r.audioUrl);
+  setBusy(false);
+}
+function stopRun() {
+  if (!run) return;
+  const r = run;
+  run = null;
+  if (r.rec && r.rec.state !== "inactive") { r.rec.onstop = null; try { r.rec.stop(); } catch (e) {} }
+  cleanup(r);
+  setMsg("Stopped.");
+}
+function finishRun() {
+  const r = run;
+  if (!r) return;
+  run = null;
+  if (r.rec && r.rec.state !== "inactive") r.rec.stop();
+  cleanup(r);
+}
+function showResult(chunks, mime) {
+  const blob = new Blob(chunks, { type: mime || "video/webm" });
+  const url = URL.createObjectURL(blob);
+  const ext = (mime || "").includes("mp4") ? "mp4" : "webm";
+  $("outCard").style.display = "block";
+  $("out").innerHTML = `<video src="${url}" controls playsinline style="width:100%;max-width:300px;display:block;margin:12px auto;border-radius:12px"></video>
+    <a class="dl" href="${url}" download="sonicai-video.${ext}">Download video (.${ext})</a>
+    ${ext === "webm" ? '<div class="muted">This browser saved a .webm file. A recent Chrome saves .mp4.</div>' : ""}`;
+  setMsg("Done! Your video is ready below.");
+}
+
+async function render(R) {
+  const id = ++runId;
+  const audio = new Audio();
+  const audioUrl = URL.createObjectURL(song);
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const src = ac.createMediaElementSource(audio);
+  const dest = ac.createMediaStreamDestination();
+  src.connect(dest);
+  src.connect(ac.destination);
+  run = { id, audio, ac, audioUrl, rec: null, raf: 0 };
+  try {
+    await ac.resume();
+    await new Promise(r => { audio.onloadedmetadata = r; audio.src = audioUrl; });
+    await new Promise(r => { audio.onseeked = r; audio.currentTime = R.from; setTimeout(r, 1500); });
+    if (!run || run.id !== id) return;
+
+    const mime = pickMime();
+    const vs = canvas.captureStream(30);
+    const stream = new MediaStream([...vs.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+    const chunks = [];
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 4000000 } : {});
+    rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = () => showResult(chunks, rec.mimeType || mime);
+    run.rec = rec;
+    rec.start(500);
+
+    const tick = () => {
+      if (!run || run.id !== id) return;
+      const now = audio.currentTime;
+      draw(now, R);
+      setMsg("Step 2 of 2: making your video... " + Math.max(0, Math.ceil(R.to - now)) +
+             "s left (keep this tab open and visible)");
+      if (now >= R.to - 0.03 || audio.ended) { finishRun(); return; }
+      run.raf = requestAnimationFrame(tick);
+    };
+    await audio.play();
+    tick();
+  } catch (e) {
+    stopRun();
+    setMsg("Error: " + e.message);
+  }
+}
+
+// ---------- The one button ----------
+$("make").onclick = async () => {
+  if (!song) { setMsg("Choose the song first (step 1)."); return; }
+  const parsed = parseLines($("lyrics").value);
+  const n = parsed.timed ? parsed.timed.length : parsed.plain.length;
+  if (!n) { setMsg("Paste the lines first (step 2)."); return; }
+  if (!window.MediaRecorder) { setMsg("Please use Chrome on a laptop to make the video."); return; }
+  stopRun();
+  $("outCard").style.display = "none";
+  setBusy(true);
+
+  try {
+    if (!info || infoFor !== song) {
+      setMsg("Step 1 of 2: listening to the song (20-40 seconds)...");
+      const fd = new FormData();
+      fd.append("file", song);
+      const res = await fetch(BASE + "/beats", { method: "POST", body: fd });
+      if (!res.ok) throw new Error("Server error " + res.status);
+      info = await res.json();
+      infoFor = song;
+    }
+  } catch (e) {
+    setMsg("Error: " + e.message + " (is the server running?)");
+    setBusy(false);
+    return;
+  }
+
+  // when does the video start and how long is it?
+  const typed = parseFloat($("startAt").value);
+  let start, len, items;
+  if (parsed.timed) {
+    start = !isNaN(typed) ? typed : Math.max(0, parsed.timed[0].t - 0.3);
+    len = Math.min(60, parsed.timed[parsed.timed.length - 1].t + 4 - start);
+    items = parsed.timed.filter(x => x.t >= start - 0.5);
+  } else {
+    start = !isNaN(typed) ? typed : info.best_start;
+    start = Math.max(0, Math.min(start, info.duration - 6));
+    len = Math.min(clamp(n * 3.5, 10, 45), info.duration - start);
+    items = alignLines(parsed.plain, start, len, info.beats);
+  }
+  const end = Math.min(info.duration, start + len);
+
+  // keep at least 1.2 s per line
+  const keep = [];
+  let prevT = -10;
+  items.forEach(it => {
+    const t = Math.max(it.t, prevT + 1.2);
+    if (t < end - 0.8) { keep.push({ t, text: it.text }); prevT = t; }
+  });
+  if (!keep.length) { setMsg("The lines do not fit in the song from that start time. Try an earlier start."); setBusy(false); return; }
+
+  const calm = info.mood === "calm" || info.mood === "sad";
+  const list = keep.map((it, i) => ({
+    text: it.text,
+    start: it.t,
+    media: media.length ? media[i % media.length] : null,
+    motion: MOTIONS[i % MOTIONS.length],
+    trans: calm ? "Fade" : (i % 2 ? "Zoom through" : "Whip"),
+    seed: (i + 1) * 13 + 7,
+  }));
+  const R = {
+    list,
+    starts: list.map(s => s.start),
+    ends: list.map((s, i) => i + 1 < list.length ? list[i + 1].start : end),
+    beats: info.beats,
+    from: Math.max(0, list[0].start - 0.4),
+    to: end,
+    active: -1,
+    dec: 0,
+  };
+  await render(R);
+};
+
+$("stop").onclick = stopRun;
+</script>
+</body>
+</html>

@@ -2,191 +2,304 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f0f14">
 <title>SonicAI</title>
 <style>
-  body { font-family: system-ui, sans-serif; background: #0f0f14; color: #eee;
-         max-width: 560px; margin: 40px auto; padding: 0 16px 60px; }
-  h1 { margin-bottom: 4px; }
-  .sub { color: #999; margin-bottom: 24px; }
-  .card { background: #1b1b25; border-radius: 14px; padding: 18px; margin-top: 16px; }
-  button { background: #7c5cff; color: #fff; border: 0; padding: 10px 18px;
-           border-radius: 10px; font-size: 15px; cursor: pointer; margin-top: 12px; }
-  button:disabled { opacity: .5; }
-  button.small { padding: 6px 12px; font-size: 13px; margin-top: 0; background: #2b2b3a; }
-  select, input[type=text] { background: #2b2b3a; color: #eee; border: 0; padding: 10px;
-           border-radius: 8px; font-size: 14px; }
-  input[type=text] { width: 100%; box-sizing: border-box; margin-top: 10px; }
-  audio { width: 100%; margin-top: 12px; }
-  .now { font-weight: 600; word-break: break-word; }
-  .track { padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px;
-           word-break: break-word; }
-  .track:hover { background: #2b2b3a; }
-  .track.active { background: #7c5cff33; color: #fff; }
-  .mood { font-size: 28px; font-weight: 700; text-transform: capitalize; }
-  .bar { background: #2b2b3a; border-radius: 6px; height: 10px; margin: 4px 0 10px; }
-  .fill { background: #7c5cff; height: 10px; border-radius: 6px; }
+  :root { --bg:#0f0f14; --card:#1b1b25; --card2:#242432; --acc:#7c5cff; --mut:#9a9ab0; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: #eee; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .app { max-width: 640px; margin: 0 auto; padding: 16px 14px 230px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  h1 { font-size: 22px; margin: 0; }
+  .muted { color: var(--mut); font-size: 13px; }
+  .ok { color: #9fe3a6; font-size: 13px; margin-top: 8px; }
+  .warn { color: #ffb86b; font-size: 13px; margin-top: 8px; }
+  .tab { display: none; } .tab.on { display: block; }
+  .card { background: var(--card); border-radius: 16px; padding: 16px; margin-top: 14px; }
+  input[type=text] { width: 100%; background: var(--card2); color: #eee; border: 0; padding: 12px; border-radius: 12px; font-size: 16px; }
+  select { background: var(--card2); color: #eee; border: 0; padding: 10px; border-radius: 10px; font-size: 14px; }
+  .btn { display: inline-block; background: var(--acc); color: #fff; border: 0; padding: 11px 18px; border-radius: 12px;
+         font-size: 15px; cursor: pointer; margin-top: 10px; }
+  .btn.alt { background: var(--card2); }
+  .btn:disabled { opacity: .5; }
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 10px 0 6px; }
+  .chip { flex: none; padding: 7px 14px; border-radius: 20px; background: var(--card2); color: var(--mut); font-size: 13px; border: 0; cursor: pointer; }
+  .chip.on { background: var(--acc); color: #fff; }
+  .addrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .song { display: flex; align-items: center; gap: 10px; padding: 10px 8px; border-radius: 12px; cursor: pointer; }
+  .song:active { background: var(--card2); }
+  .song.active { background: #7c5cff26; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .sname { flex: 1; min-width: 0; }
+  .sname b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 14px; }
+  .sname small { color: var(--mut); font-size: 12px; }
+  .heart { background: none; border: 0; font-size: 22px; color: var(--mut); padding: 6px 8px; cursor: pointer; }
+  .heart.on { color: #ff4d7d; }
+  /* player bar + nav */
+  .bar { position: fixed; left: 50%; transform: translateX(-50%); width: 100%; max-width: 640px; z-index: 10; }
+  #player-bar { bottom: calc(60px + env(safe-area-inset-bottom)); background: #16161f; border-top: 1px solid #2b2b3a;
+                padding: 10px 14px 8px; }
+  nav { bottom: 0; height: calc(60px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
+        background: #12121a; border-top: 1px solid #2b2b3a; display: flex; }
+  nav button { flex: 1; background: none; border: 0; color: var(--mut); font-size: 11px; cursor: pointer; }
+  nav button span { display: block; font-size: 20px; }
+  nav button.on { color: #fff; }
+  .ptop { display: flex; align-items: center; gap: 8px; }
+  #ptitle { flex: 1; min-width: 0; font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seekrow { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--mut); margin: 6px 0 2px; }
+  #seek { flex: 1; accent-color: var(--acc); }
+  .ctl { display: flex; align-items: center; justify-content: space-between; padding: 0 6px; }
+  .ctl button { background: none; border: 0; color: #ddd; font-size: 22px; padding: 6px 10px; cursor: pointer; }
+  .ctl button.on { color: var(--acc); }
+  #pp { background: var(--acc); color: #fff; border-radius: 50%; width: 50px; height: 50px; font-size: 20px; padding: 0; }
+  /* sound tab */
+  .bar2 { background: var(--card2); border-radius: 6px; height: 10px; margin: 4px 0 10px; }
+  .fill { background: var(--acc); height: 10px; border-radius: 6px; }
   .row { display: flex; justify-content: space-between; font-size: 14px; }
-  .song { font-size: 14px; padding: 6px 0; border-bottom: 1px solid #2b2b3a; word-break: break-word; }
-  .eqrow { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 13px; }
-  .eqrow label { width: 52px; color: #aaa; }
-  .eqrow input { flex: 1; accent-color: #7c5cff; }
-  .eqrow span { width: 40px; text-align: right; color: #aaa; }
-  .eqhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  #eqnote { color: #9fe3a6; font-size: 13px; margin-top: 8px; }
-  #pinfo { color: #9fe3a6; font-size: 13px; margin-top: 10px; }
-  #pstatus { color: #ffb86b; font-size: 13px; margin-top: 8px; }
-  .muted { color: #999; font-size: 13px; }
+  .moodbig { font-size: 26px; font-weight: 700; text-transform: capitalize; }
   .dnavals { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; font-size: 13px; margin-top: 8px; }
+  .eqrow { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 13px; }
+  .eqrow label { width: 54px; color: #aaa; }
+  .eqrow input { flex: 1; accent-color: var(--acc); }
+  .eqrow span { width: 44px; text-align: right; color: #aaa; }
+  .eqhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
   .big { font-size: 26px; font-weight: 700; }
+  .stsong { font-size: 14px; padding: 6px 0; border-bottom: 1px solid #2b2b3a; word-break: break-word; }
 </style>
 </head>
 <body>
-<h1>🎧 SonicAI</h1>
-<div class="sub">Play your music, shape the sound, and let the AI understand it.</div>
+<audio id="player" crossorigin="anonymous" preload="auto" playsinline></audio>
 
-<div class="card">
-  <b>Smart playlist</b>
-  <div class="muted" style="margin-top:4px">
-    Try: "45 minute energetic workout" or "calm songs for studying"
+<div class="app">
+  <header><h1>🎧 SonicAI</h1><span class="muted" id="srv"></span></header>
+
+  <!-- LIBRARY -->
+  <section class="tab on" id="tab-library">
+    <input type="text" id="q" placeholder="Search your songs">
+    <div class="chips" id="chips"></div>
+    <div class="addrow">
+      <label class="btn">＋ Add songs<input type="file" id="add" accept=".mp3,.wav,.flac" multiple hidden></label>
+      <span class="muted" id="libmsg"></span>
+    </div>
+    <div id="liblist" style="margin-top:8px"></div>
+  </section>
+
+  <!-- SMART PLAYLIST -->
+  <section class="tab" id="tab-playlist">
+    <div class="card">
+      <b>Smart playlist</b>
+      <div class="muted" style="margin:4px 0 10px">Try: "45 minute energetic workout" or "calm songs for studying"</div>
+      <input type="text" id="pq" placeholder="Describe the playlist you want">
+      <button class="btn" id="mk">Create playlist</button>
+      <div class="ok" id="pinfo"></div>
+      <div class="warn" id="pstatus"></div>
+    </div>
+    <div id="pllist" style="margin-top:8px"></div>
+  </section>
+
+  <!-- SOUND -->
+  <section class="tab" id="tab-sound">
+    <div class="card"><b>Mood</b><div id="mood" style="margin-top:8px"><div class="muted">Play a song to see its mood.</div></div></div>
+    <div class="card"><b>Sound DNA</b><div id="dna" style="margin-top:8px"><div class="muted">Play a song to see its Sound DNA.</div></div></div>
+    <div class="card">
+      <div class="eqhead"><b>Equalizer</b>
+        <span><select id="preset"></select> <button class="btn alt" id="reset" style="margin:0;padding:8px 12px">Reset</button></span></div>
+      <label class="muted" style="display:block;margin-top:10px"><input type="checkbox" id="autoeq" checked> Auto AI EQ (match preset to each song's mood)</label>
+      <div id="eq" style="margin-top:10px"></div>
+      <div class="ok" id="eqnote"></div>
+    </div>
+    <div class="card"><b>Similar songs</b><div id="siml" style="margin-top:6px"></div></div>
+  </section>
+
+  <!-- STATS -->
+  <section class="tab" id="tab-stats">
+    <div class="card">
+      <div class="eqhead"><b>Listening analytics</b><button class="btn alt" id="refresh" style="margin:0;padding:8px 12px">Refresh</button></div>
+      <div id="stats" style="margin-top:10px"><div class="muted">Loading...</div></div>
+    </div>
+  </section>
+</div>
+
+<div class="bar" id="player-bar">
+  <div class="ptop"><div id="ptitle">Pick a song to start</div><button class="heart" id="pheart">♡</button></div>
+  <div class="seekrow"><span id="tcur">0:00</span><input type="range" id="seek" min="0" max="1000" value="0"><span id="tdur">0:00</span></div>
+  <div class="ctl">
+    <button id="shuf" title="Shuffle">🔀</button>
+    <button id="prev">⏮</button>
+    <button id="pp">▶</button>
+    <button id="next">⏭</button>
+    <button id="rep" title="Repeat">🔁</button>
   </div>
-  <input type="text" id="pq" placeholder="Describe the playlist you want">
-  <button id="mk">Create playlist</button>
-  <div id="pinfo"></div>
-  <div id="pstatus"></div>
 </div>
 
-<div class="card">
-  <input type="file" id="files" accept=".mp3,.wav,.flac" multiple>
-  <div class="now" id="now" style="margin-top:12px">No song selected</div>
-  <audio id="player" controls crossorigin="anonymous"></audio>
-  <br><button id="go">Analyze this song</button>
-  <div id="status"></div>
-</div>
-
-<div class="card">
-  <b>Sound DNA</b>
-  <div id="dna" style="margin-top:8px"><div class="muted">Play a song to see its Sound DNA.</div></div>
-</div>
-
-<div class="card">
-  <div class="eqhead">
-    <b>Equalizer</b>
-    <span>
-      <select id="preset"></select>
-      <button class="small" id="reset">Reset</button>
-    </span>
-  </div>
-  <div id="eq" style="margin-top:10px"></div>
-  <div id="eqnote"></div>
-</div>
-
-<div class="card" id="queueCard" style="display:none">
-  <b>Queue</b>
-  <div id="queue" style="margin-top:8px"></div>
-</div>
-
-<div id="result"></div>
-
-<div class="card">
-  <div class="eqhead">
-    <b>Listening analytics</b>
-    <button class="small" id="refresh">Refresh</button>
-  </div>
-  <div id="stats" style="margin-top:10px"><div class="muted">Loading...</div></div>
-</div>
+<nav class="bar">
+  <button data-tab="library" class="on"><span>🎵</span>Library</button>
+  <button data-tab="playlist"><span>✨</span>Playlist</button>
+  <button data-tab="sound"><span>🎚</span>Sound</button>
+  <button data-tab="stats"><span>📊</span>Stats</button>
+</nav>
 
 <script>
 const BASE = location.protocol === "file:" ? "http://127.0.0.1:8000" : location.origin;
-const API = BASE + "/analyze";
-const player = document.getElementById("player");
-const now = document.getElementById("now");
-const queueEl = document.getElementById("queue");
-const queueCard = document.getElementById("queueCard");
-const go = document.getElementById("go");
-const status = document.getElementById("status");
-const result = document.getElementById("result");
-const eqEl = document.getElementById("eq");
-const presetEl = document.getElementById("preset");
-const eqNote = document.getElementById("eqnote");
-const dnaBox = document.getElementById("dna");
-const statsBox = document.getElementById("stats");
-function esc(s) {
-  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const $ = id => document.getElementById(id);
+const player = $("player");
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = s => { s = Math.max(0, Math.round(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+const title = n => n.replace(/\.(mp3|wav|flac)$/i, "").replace(/\s*\[[\w-]{8,}\]\s*$/, "").replace(/[+_]/g, " ").replace(/\s+/g, " ").trim();
+const MOOD_COLOR = { energetic: "#ff9f43", intense: "#ff4d6d", calm: "#4dd2c4", sad: "#6c8cff" };
+const MOOD_PRESET = { energetic: "Dance", intense: "Rock", calm: "Chill", sad: "Vocal" };
+
+let lib = [], recent = [], queue = [], qi = -1;
+let shuffle = false, repeat = 0, filter = "all", query = "";
+const cur = () => queue[qi] || null;
+
+// ---------- Tabs ----------
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.id === "tab-" + b.dataset.tab));
+  if (b.dataset.tab === "stats") loadStats();
+  window.scrollTo(0, 0);
+});
+
+// ---------- Song lists ----------
+function rowHTML(s, i) {
+  const c = cur();
+  return `<div class="song ${c && c.song === s.song ? "active" : ""}" data-i="${i}">
+    <span class="dot" style="background:${MOOD_COLOR[s.mood] || "#888"}"></span>
+    <div class="sname"><b>${esc(title(s.song))}</b><small>${esc(s.mood)} · ${s.tempo} BPM · ${fmt(s.seconds)}</small></div>
+    <button class="heart ${s.fav ? "on" : ""}" data-fav="1" aria-label="favorite">${s.fav ? "♥" : "♡"}</button></div>`;
+}
+function renderList(el, list, empty) {
+  el._list = list;
+  el.innerHTML = list.length ? list.map(rowHTML).join("")
+    : `<div class="muted" style="padding:14px 4px">${empty || "Nothing here yet."}</div>`;
+}
+function bindList(el) {
+  el.addEventListener("click", e => {
+    const row = e.target.closest(".song");
+    if (!row) return;
+    const list = el._list, i = +row.dataset.i;
+    if (e.target.closest("[data-fav]")) toggleFav(list[i].song);
+    else playList(list, i);
+  });
+}
+["liblist", "pllist", "siml"].forEach(id => bindList($(id)));
+
+const CHIPS = [["all", "All"], ["fav", "♥ Favorites"], ["recent", "Recent"],
+               ["energetic", "Energetic"], ["intense", "Intense"], ["calm", "Calm"], ["sad", "Sad"]];
+function renderChips() {
+  $("chips").innerHTML = CHIPS.map(([k, n]) => `<button class="chip ${filter === k ? "on" : ""}" data-k="${k}">${n}</button>`).join("");
+}
+$("chips").onclick = e => {
+  const b = e.target.closest(".chip");
+  if (!b) return;
+  filter = b.dataset.k; renderChips(); renderLib();
+};
+$("q").oninput = e => { query = e.target.value.trim().toLowerCase(); renderLib(); };
+
+function visible() {
+  let L = lib;
+  if (filter === "fav") L = L.filter(s => s.fav);
+  else if (filter === "recent") L = recent.map(n => lib.find(s => s.song === n)).filter(Boolean);
+  else if (filter !== "all") L = L.filter(s => s.mood === filter);
+  if (query) L = L.filter(s => title(s.song).toLowerCase().includes(query));
+  return L;
+}
+function renderLib() {
+  const empty = lib.length ? "No songs match." : "No songs yet. Tap ＋ Add songs.";
+  renderList($("liblist"), visible(), empty);
+}
+function refreshLists() {
+  renderLib();
+  if ($("pllist")._list) renderList($("pllist"), $("pllist")._list);
+  if ($("siml")._list) renderList($("siml"), $("siml")._list);
 }
 
-// each track is { name, file } (chosen from your computer) or { name, url } (from the library)
-let tracks = [];
-let current = -1;
+async function loadLib() {
+  try {
+    lib = await (await fetch(BASE + "/library")).json();
+    recent = await (await fetch(BASE + "/recent")).json();
+    $("srv").textContent = lib.length + " songs";
+  } catch (e) {
+    $("libmsg").textContent = "Cannot reach the server. Is it running?";
+    return;
+  }
+  renderChips(); renderLib();
+}
+
+async function toggleFav(song) {
+  try {
+    const r = await fetch(BASE + "/favorite", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify({ song }) });
+    const d = await r.json();
+    const s = lib.find(x => x.song === song);
+    if (s) s.fav = d.fav;
+    refreshLists(); updateHeart();
+  } catch (e) {}
+}
+
+// ---------- Add songs ----------
+$("add").onchange = async () => {
+  const files = Array.from($("add").files);
+  if (!files.length) return;
+  let ok = 0; const fails = [];
+  for (let i = 0; i < files.length; i++) {
+    $("libmsg").textContent = `Adding ${i + 1}/${files.length}: AI is listening to "${title(files[i].name)}" (20-40 s)...`;
+    try {
+      const fd = new FormData();
+      fd.append("file", files[i]);
+      const r = await fetch(BASE + "/library/upload", { method: "POST", body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || r.status);
+      ok++;
+    } catch (e) { fails.push(files[i].name); }
+  }
+  $("add").value = "";
+  await loadLib();
+  $("libmsg").textContent = ok + " song(s) added, mood detected automatically." + (fails.length ? " " + fails.length + " failed." : "");
+};
 
 // ---------- Equalizer ----------
 const BANDS = [
-  { f: 60,    t: "lowshelf",  label: "60 Hz" },
-  { f: 170,   t: "peaking",   label: "170 Hz" },
-  { f: 500,   t: "peaking",   label: "500 Hz" },
-  { f: 1500,  t: "peaking",   label: "1.5 kHz" },
-  { f: 4000,  t: "peaking",   label: "4 kHz" },
-  { f: 10000, t: "highshelf", label: "10 kHz" },
+  { f: 60, t: "lowshelf", label: "60 Hz" }, { f: 170, t: "peaking", label: "170 Hz" },
+  { f: 500, t: "peaking", label: "500 Hz" }, { f: 1500, t: "peaking", label: "1.5 kHz" },
+  { f: 4000, t: "peaking", label: "4 kHz" }, { f: 10000, t: "highshelf", label: "10 kHz" },
 ];
-
 const PRESETS = {
-  "Flat":       [0, 0, 0, 0, 0, 0],
-  "Bass Boost": [8, 6, 2, 0, 0, 0],
-  "Vocal":      [-2, -1, 2, 4, 3, 0],
-  "Rock":       [5, 3, -1, -1, 3, 5],
-  "Classical":  [3, 2, 0, 0, 2, 3],
-  "Dance":      [6, 4, 0, 2, 3, 2],
-  "Chill":      [2, 2, 0, -1, -2, -3],
-  "Gaming":     [3, 0, -1, 2, 4, 3],
-  "Podcast":    [-4, -1, 3, 4, 2, -2],
+  "Flat": [0, 0, 0, 0, 0, 0], "Bass Boost": [8, 6, 2, 0, 0, 0], "Vocal": [-2, -1, 2, 4, 3, 0],
+  "Rock": [5, 3, -1, -1, 3, 5], "Classical": [3, 2, 0, 0, 2, 3], "Dance": [6, 4, 0, 2, 3, 2],
+  "Chill": [2, 2, 0, -1, -2, -3], "Gaming": [3, 0, -1, 2, 4, 3], "Podcast": [-4, -1, 3, 4, 2, -2],
 };
-
-// AI EQ: mood -> preset
-const MOOD_PRESET = { energetic: "Dance", intense: "Rock", calm: "Chill", sad: "Vocal" };
-
 let ctx = null;
-const filters = [];
-const sliders = [];
-const valueLabels = [];
+const filters = [], sliders = [], valueLabels = [];
+const presetEl = $("preset"), eqNote = $("eqnote");
 
-Object.keys(PRESETS).concat("Custom").forEach(name => {
-  const o = document.createElement("option");
-  o.value = name; o.textContent = name;
-  presetEl.appendChild(o);
+Object.keys(PRESETS).concat("Custom").forEach(n => {
+  const o = document.createElement("option"); o.value = n; o.textContent = n; presetEl.appendChild(o);
 });
-
 BANDS.forEach((b, i) => {
   const row = document.createElement("div");
   row.className = "eqrow";
-  row.innerHTML = `<label>${b.label}</label>
-    <input type="range" min="-12" max="12" step="1" value="0">
-    <span>0 dB</span>`;
-  const slider = row.querySelector("input");
-  const val = row.querySelector("span");
+  row.innerHTML = `<label>${b.label}</label><input type="range" min="-12" max="12" step="1" value="0"><span>0 dB</span>`;
+  const slider = row.querySelector("input"), val = row.querySelector("span");
   slider.oninput = () => {
     val.textContent = slider.value + " dB";
     if (filters[i]) filters[i].gain.value = +slider.value;
-    presetEl.value = "Custom";
-    eqNote.textContent = "";
+    presetEl.value = "Custom"; eqNote.textContent = "";
   };
-  sliders.push(slider);
-  valueLabels.push(val);
-  eqEl.appendChild(row);
+  sliders.push(slider); valueLabels.push(val);
+  $("eq").appendChild(row);
 });
-
 function applyPreset(name) {
-  const gains = PRESETS[name];
-  if (!gains) return;
-  gains.forEach((g, i) => {
-    sliders[i].value = g;
-    valueLabels[i].textContent = g + " dB";
-    if (filters[i]) filters[i].gain.value = g;
-  });
+  const g = PRESETS[name];
+  if (!g) return;
+  g.forEach((v, i) => { sliders[i].value = v; valueLabels[i].textContent = v + " dB"; if (filters[i]) filters[i].gain.value = v; });
   presetEl.value = name;
 }
-
 presetEl.onchange = () => { applyPreset(presetEl.value); eqNote.textContent = ""; };
-document.getElementById("reset").onclick = () => { applyPreset("Flat"); eqNote.textContent = ""; };
+$("reset").onclick = () => { applyPreset("Flat"); eqNote.textContent = ""; };
 
 function setupAudio() {
   if (ctx) return;
@@ -194,265 +307,195 @@ function setupAudio() {
   let node = ctx.createMediaElementSource(player);
   BANDS.forEach((b, i) => {
     const fl = ctx.createBiquadFilter();
-    fl.type = b.t;
-    fl.frequency.value = b.f;
+    fl.type = b.t; fl.frequency.value = b.f;
     if (b.t === "peaking") fl.Q.value = 1;
     fl.gain.value = +sliders[i].value;
-    node.connect(fl);
-    node = fl;
-    filters.push(fl);
+    node.connect(fl); node = fl; filters.push(fl);
   });
   node.connect(ctx.destination);
 }
 
 // ---------- Listening log ----------
-let listened = 0;
-let lastT = 0;
-let loggedName = null;
+let listened = 0, lastT = 0, loggedName = null;
+function flushLog() {
+  if (loggedName && listened >= 5) {
+    fetch(BASE + "/log", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ song: loggedName, seconds: listened }), keepalive: true }).catch(() => {});
+  }
+  listened = 0;
+}
+window.addEventListener("pagehide", flushLog);
 
+// ---------- Player ----------
+function playList(list, i) { queue = list.slice(); qi = i; startTrack(); }
+
+function startTrack() {
+  const s = cur();
+  if (!s) return;
+  flushLog();
+  setupAudio();
+  if (ctx.state === "suspended") ctx.resume();
+  loggedName = s.song; listened = 0; lastT = 0;
+  player.src = BASE + s.url;
+  player.play().catch(() => {});
+  $("ptitle").textContent = title(s.song);
+  updateHeart();
+  refreshLists();
+  if ($("autoeq").checked && MOOD_PRESET[s.mood]) {
+    applyPreset(MOOD_PRESET[s.mood]);
+    eqNote.textContent = "AI EQ applied: " + MOOD_PRESET[s.mood] + " (mood: " + s.mood + ")";
+  }
+  loadDNA(s.song);
+  loadInfo(s.song);
+  if ("mediaSession" in navigator && window.MediaMetadata) {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: title(s.song), artist: "SonicAI" });
+  }
+}
+
+function next(auto) {
+  if (!queue.length) return;
+  if (repeat === 2 && auto) { player.currentTime = 0; player.play(); return; }
+  if (shuffle && queue.length > 1) {
+    let n; do { n = Math.floor(Math.random() * queue.length); } while (n === qi);
+    qi = n;
+  } else if (qi + 1 < queue.length) qi++;
+  else if (repeat === 1) qi = 0;
+  else if (auto) return;
+  else qi = 0;
+  startTrack();
+}
+function prev() {
+  if (!queue.length) return;
+  if (player.currentTime > 3) { player.currentTime = 0; return; }
+  qi = qi > 0 ? qi - 1 : (repeat === 1 ? queue.length - 1 : 0);
+  startTrack();
+}
+
+$("pp").onclick = () => {
+  if (!cur()) { const v = visible(); if (v.length) playList(v, 0); return; }
+  if (ctx && ctx.state === "suspended") ctx.resume();
+  player.paused ? player.play() : player.pause();
+};
+$("next").onclick = () => next(false);
+$("prev").onclick = prev;
+$("shuf").onclick = () => { shuffle = !shuffle; $("shuf").classList.toggle("on", shuffle); };
+$("rep").onclick = () => {
+  repeat = (repeat + 1) % 3;
+  $("rep").textContent = repeat === 2 ? "🔂" : "🔁";
+  $("rep").classList.toggle("on", repeat > 0);
+};
+$("pheart").onclick = () => { if (cur()) toggleFav(cur().song); };
+function updateHeart() {
+  const s = cur();
+  $("pheart").textContent = s && s.fav ? "♥" : "♡";
+  $("pheart").classList.toggle("on", !!(s && s.fav));
+}
+
+player.onplay = () => { $("pp").textContent = "⏸"; };
+player.onpause = () => { $("pp").textContent = "▶"; flushLog(); };
+player.onended = () => { flushLog(); next(true); };
+player.onloadedmetadata = () => { $("tdur").textContent = fmt(player.duration); };
 player.ontimeupdate = () => {
   const d = player.currentTime - lastT;
   if (d > 0 && d < 1.5) listened += d;
   lastT = player.currentTime;
+  if (player.duration) $("seek").value = player.currentTime / player.duration * 1000;
+  $("tcur").textContent = fmt(player.currentTime);
 };
+$("seek").oninput = () => { if (player.duration) player.currentTime = $("seek").value / 1000 * player.duration; };
 
-function flushLog() {
-  if (loggedName && listened >= 5) {
-    fetch(BASE + "/log", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ song: loggedName, seconds: listened }),
-      keepalive: true,
-    }).catch(() => {});
-  }
-  listened = 0;
-}
-player.onpause = flushLog;
-window.addEventListener("pagehide", flushLog);
-
-// ---------- Player ----------
-document.getElementById("files").onchange = (e) => {
-  tracks = Array.from(e.target.files).map(f => ({ name: f.name, file: f }));
-  if (!tracks.length) return;
-  startQueue();
-};
-
-function startQueue() {
-  queueCard.style.display = "block";
-  result.innerHTML = "";
-  status.textContent = "";
-  renderQueue();
-  play(0);
-}
-
-function renderQueue() {
-  queueEl.innerHTML = "";
-  tracks.forEach((t, i) => {
-    const d = document.createElement("div");
-    d.className = "track" + (i === current ? " active" : "");
-    d.textContent = (i + 1) + ". " + t.name;
-    d.onclick = () => play(i);
-    queueEl.appendChild(d);
-  });
-}
-
-function play(i) {
-  flushLog();
-  setupAudio();
-  if (ctx.state === "suspended") ctx.resume();
-  if (player.src && player.src.startsWith("blob:")) URL.revokeObjectURL(player.src);
-  current = i;
-  const t = tracks[i];
-  loggedName = t.name;
-  listened = 0;
-  lastT = 0;
-  player.src = t.file ? URL.createObjectURL(t.file) : t.url;
-  player.play();
-  now.textContent = "Now playing: " + t.name;
-  result.innerHTML = "";
-  status.textContent = "";
-  eqNote.textContent = "";
-  renderQueue();
-  loadDNA(t.name);
-}
-
-player.onended = () => {
-  flushLog();
-  loadStats();
-  if (current + 1 < tracks.length) play(current + 1);
-};
-
-// ---------- Sound DNA ----------
-const DNA_LABELS = {
-  energy: "Energy", brightness: "Brightness", bass: "Bass",
-  vocal: "Vocals", rhythm: "Rhythm", tempo: "Tempo",
-};
-
-function radarSVG(scores) {
-  const keys = Object.keys(DNA_LABELS);
-  const cx = 130, cy = 120, R = 80;
-  const pt = (i, v) => {
-    const a = -Math.PI / 2 + i * 2 * Math.PI / keys.length;
-    return [cx + R * v / 100 * Math.cos(a), cy + R * v / 100 * Math.sin(a)];
-  };
-  let grid = "";
-  [25, 50, 75, 100].forEach(l => {
-    grid += `<polygon points="${keys.map((_, i) => pt(i, l).join(",")).join(" ")}" fill="none" stroke="#2b2b3a"/>`;
-  });
-  const axes = keys.map((_, i) => {
-    const [x, y] = pt(i, 100);
-    return `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="#2b2b3a"/>`;
-  }).join("");
-  const poly = keys.map((k, i) => pt(i, scores[k]).join(",")).join(" ");
-  const labels = keys.map((k, i) => {
-    const [x, y] = pt(i, 122);
-    return `<text x="${x}" y="${y}" fill="#aaa" font-size="11" text-anchor="middle" dominant-baseline="middle">${DNA_LABELS[k]}</text>`;
-  }).join("");
-  return `<svg viewBox="0 0 260 240" width="100%" style="max-width:300px;display:block;margin:0 auto">
-    ${grid}${axes}<polygon points="${poly}" fill="#7c5cff55" stroke="#7c5cff" stroke-width="2"/>${labels}</svg>`;
-}
-
-function renderDNA(scores, bpm) {
-  const vals = Object.keys(DNA_LABELS)
-    .map(k => `<div class="row"><span>${DNA_LABELS[k]}</span><span>${scores[k]}</span></div>`).join("");
-  dnaBox.innerHTML = radarSVG(scores) +
-    `<div class="dnavals">${vals}</div>
-     <div class="muted" style="margin-top:8px">${bpm} BPM · scores are relative to your library (0-100)</div>`;
-}
-
-async function loadDNA(name) {
-  dnaBox.innerHTML = '<div class="muted">Loading Sound DNA...</div>';
-  try {
-    const res = await fetch(BASE + "/dna?song=" + encodeURIComponent(name));
-    if (!res.ok) throw new Error("not in library");
-    const d = await res.json();
-    if (tracks[current] && tracks[current].name === name) renderDNA(d.scores, d.bpm);
-  } catch (e) {
-    dnaBox.innerHTML = '<div class="muted">Press "Analyze this song" to compute its Sound DNA.</div>';
-  }
+if ("mediaSession" in navigator) {
+  const set = (a, f) => { try { navigator.mediaSession.setActionHandler(a, f); } catch (e) {} };
+  set("play", () => player.play()); set("pause", () => player.pause());
+  set("previoustrack", prev); set("nexttrack", () => next(false));
 }
 
 // ---------- Smart playlist ----------
-const pq = document.getElementById("pq");
-const mk = document.getElementById("mk");
-const pinfo = document.getElementById("pinfo");
-const pstatus = document.getElementById("pstatus");
-
 async function makePlaylist() {
-  const q = pq.value.trim();
-  if (!q) { pstatus.textContent = "Type what kind of playlist you want."; return; }
-  mk.disabled = true;
-  pstatus.textContent = "Creating playlist...";
-  pinfo.textContent = "";
+  const q = $("pq").value.trim();
+  if (!q) { $("pstatus").textContent = "Type what kind of playlist you want."; return; }
+  $("mk").disabled = true; $("pstatus").textContent = "Creating playlist..."; $("pinfo").textContent = "";
   try {
-    const res = await fetch(BASE + "/playlist?q=" + encodeURIComponent(q));
-    if (!res.ok) throw new Error("Server error " + res.status);
-    const d = await res.json();
-    pstatus.textContent = d.note || "";
-    if (!d.songs.length) { mk.disabled = false; return; }
-    pinfo.textContent = "Detected: " + d.detected_moods.join(", ") +
-      " · " + d.total_minutes + " min · " + d.songs.length + " songs";
-    tracks = d.songs.map(s => ({ name: s.song, url: BASE + s.url }));
-    startQueue();
-  } catch (e) {
-    pstatus.textContent = "Error: " + e.message + " (is the server running?)";
-  }
-  mk.disabled = false;
+    const d = await (await fetch(BASE + "/playlist?q=" + encodeURIComponent(q))).json();
+    $("pstatus").textContent = d.note || "";
+    const songs = d.songs.map(x => lib.find(s => s.song === x.song)).filter(Boolean);
+    renderList($("pllist"), songs, "No matching songs yet.");
+    if (songs.length) {
+      $("pinfo").textContent = "Detected: " + d.detected_moods.join(", ") + " · " + d.total_minutes + " min · " + songs.length + " songs. Tap a song to play.";
+      playList(songs, 0);
+    }
+  } catch (e) { $("pstatus").textContent = "Error: " + e.message + " (is the server running?)"; }
+  $("mk").disabled = false;
 }
-mk.onclick = makePlaylist;
-pq.onkeydown = (e) => { if (e.key === "Enter") makePlaylist(); };
+$("mk").onclick = makePlaylist;
+$("pq").onkeydown = e => { if (e.key === "Enter") makePlaylist(); };
 
-// ---------- Analyze ----------
-go.onclick = async () => {
-  if (current < 0) { status.textContent = "Choose songs or create a playlist first."; return; }
-  go.disabled = true;
-  status.textContent = "Analyzing... (20-40 seconds)";
-  result.innerHTML = "";
+// ---------- Mood, similar songs, Sound DNA ----------
+async function loadInfo(song) {
+  $("mood").innerHTML = '<div class="muted">Loading...</div>';
   try {
-    const t = tracks[current];
-    const blob = t.file || await (await fetch(t.url)).blob();
-    const fd = new FormData();
-    fd.append("file", blob, t.name);
-    const res = await fetch(API, { method: "POST", body: fd });
-    if (!res.ok) throw new Error("Server error " + res.status);
-    show(await res.json());
-    status.textContent = "";
-  } catch (e) {
-    status.textContent = "Error: " + e.message + " (is the server running?)";
-  }
-  go.disabled = false;
-};
+    const r = await fetch(BASE + "/similar?song=" + encodeURIComponent(song));
+    if (!r.ok) throw new Error("not in library");
+    const d = await r.json();
+    const s = cur();
+    if (!s || s.song !== song) return;
+    const bars = Object.entries(d.probs).sort((a, b) => b[1] - a[1]).map(([m, p]) =>
+      `<div class="row"><span style="text-transform:capitalize">${esc(m)}</span><span>${Math.round(p * 100)}%</span></div>
+       <div class="bar2"><div class="fill" style="width:${p * 100}%"></div></div>`).join("");
+    $("mood").innerHTML = `<div class="moodbig">${esc(s.mood)}</div><div class="muted">${s.tempo} BPM</div><div style="margin-top:10px">${bars}</div>`;
+    renderList($("siml"), d.similar.map(x => lib.find(l => l.song === x.song)).filter(Boolean), "No similar songs yet.");
+  } catch (e) { $("mood").innerHTML = '<div class="muted">Details not available for this song.</div>'; }
+}
 
-function show(d) {
-  const bars = Object.entries(d.mood_probabilities)
-    .sort((a, b) => b[1] - a[1])
-    .map(([m, p]) => `<div class="row"><span>${m}</span><span>${Math.round(p*100)}%</span></div>
-      <div class="bar"><div class="fill" style="width:${p*100}%"></div></div>`).join("");
-  const sims = d.similar_songs
-    .map(s => `<div class="song">${esc(s.song)}<br><small>similarity ${s.similarity}</small></div>`).join("");
-  result.innerHTML = `
-    <div class="card"><div class="mood">${d.mood}</div>
-      <div class="muted">${d.tempo_bpm} BPM</div></div>
-    <div class="card"><b>Mood breakdown</b><div style="margin-top:10px">${bars}</div></div>
-    <div class="card"><b>Similar songs in your library</b>${sims}</div>`;
-
-  if (d.dna) renderDNA(d.dna.scores, d.dna.bpm);
-
-  // AI EQ: pick a preset from the detected mood
-  const preset = MOOD_PRESET[d.mood];
-  if (preset) {
-    applyPreset(preset);
-    eqNote.textContent = "AI EQ applied: " + preset + " (detected mood: " + d.mood + ")";
-  }
+const DNA_LABELS = { energy: "Energy", brightness: "Brightness", bass: "Bass", vocal: "Vocals", rhythm: "Rhythm", tempo: "Tempo" };
+function radarSVG(sc) {
+  const keys = Object.keys(DNA_LABELS), cx = 130, cy = 120, R = 80;
+  const pt = (i, v) => { const a = -Math.PI / 2 + i * 2 * Math.PI / keys.length; return [cx + R * v / 100 * Math.cos(a), cy + R * v / 100 * Math.sin(a)]; };
+  let grid = "";
+  [25, 50, 75, 100].forEach(l => { grid += `<polygon points="${keys.map((_, i) => pt(i, l).join(",")).join(" ")}" fill="none" stroke="#2b2b3a"/>`; });
+  const axes = keys.map((_, i) => { const [x, y] = pt(i, 100); return `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="#2b2b3a"/>`; }).join("");
+  const poly = keys.map((k, i) => pt(i, sc[k]).join(",")).join(" ");
+  const labels = keys.map((k, i) => { const [x, y] = pt(i, 122); return `<text x="${x}" y="${y}" fill="#aaa" font-size="11" text-anchor="middle" dominant-baseline="middle">${DNA_LABELS[k]}</text>`; }).join("");
+  return `<svg viewBox="0 0 260 240" width="100%" style="max-width:300px;display:block;margin:0 auto">${grid}${axes}<polygon points="${poly}" fill="#7c5cff55" stroke="#7c5cff" stroke-width="2"/>${labels}</svg>`;
+}
+async function loadDNA(song) {
+  $("dna").innerHTML = '<div class="muted">Loading Sound DNA...</div>';
+  try {
+    const r = await fetch(BASE + "/dna?song=" + encodeURIComponent(song));
+    if (!r.ok) throw new Error("no dna");
+    const d = await r.json();
+    if (!cur() || cur().song !== song) return;
+    const vals = Object.keys(DNA_LABELS).map(k => `<div class="row"><span>${DNA_LABELS[k]}</span><span>${d.scores[k]}</span></div>`).join("");
+    $("dna").innerHTML = radarSVG(d.scores) + `<div class="dnavals">${vals}</div><div class="muted" style="margin-top:8px">${d.bpm} BPM · scores are relative to your library (0-100)</div>`;
+  } catch (e) { $("dna").innerHTML = '<div class="muted">Sound DNA not available for this song.</div>'; }
 }
 
 // ---------- Listening analytics ----------
-function fmtMin(m) {
-  const h = Math.floor(m / 60);
-  const mm = Math.round(m % 60);
-  return h ? `${h}h ${mm}m` : `${mm}m`;
-}
-function fmtHour(h) {
-  const ap = h < 12 ? "AM" : "PM";
-  const x = h % 12 === 0 ? 12 : h % 12;
-  return x + " " + ap;
-}
-
+const fmtMin = m => { const h = Math.floor(m / 60), mm = Math.round(m % 60); return h ? `${h}h ${mm}m` : `${mm}m`; };
+const fmtHour = h => (h % 12 === 0 ? 12 : h % 12) + " " + (h < 12 ? "AM" : "PM");
 async function loadStats() {
+  const box = $("stats");
   try {
-    const res = await fetch(BASE + "/stats");
-    if (!res.ok) throw new Error("Server error " + res.status);
-    const d = await res.json();
-    if (!d.sessions) {
-      statsBox.innerHTML = '<div class="muted">No listening history yet. Play a few songs (5+ seconds each) and press Refresh.</div>';
-      return;
-    }
+    const d = await (await fetch(BASE + "/stats")).json();
+    if (!d.sessions) { box.innerHTML = '<div class="muted">No listening history yet. Play a few songs (5+ seconds each), then press Refresh.</div>'; return; }
     const maxM = Math.max(...d.moods.map(m => m.minutes), 0.01);
-    const moodBars = d.moods.map(m => `
-      <div class="row"><span style="text-transform:capitalize">${esc(m.mood)}</span><span>${fmtMin(m.minutes)}</span></div>
-      <div class="bar"><div class="fill" style="width:${100 * m.minutes / maxM}%"></div></div>`).join("");
-    const top = d.top_songs.map(s =>
-      `<div class="song">${esc(s.song)}<br><small>${fmtMin(s.minutes)}</small></div>`).join("");
-    const maxH = Math.max(...d.hours, 0.01);
-    const peak = d.hours.indexOf(Math.max(...d.hours));
-    const hbars = d.hours.map((m, h) =>
-      `<div title="${fmtHour(h)}: ${m} min" style="flex:1;background:#7c5cff;height:${Math.max(2, 60 * m / maxH)}px;border-radius:2px"></div>`).join("");
-    statsBox.innerHTML = `
-      <div class="big">${fmtMin(d.total_minutes)}</div>
+    const moodBars = d.moods.map(m => `<div class="row"><span style="text-transform:capitalize">${esc(m.mood)}</span><span>${fmtMin(m.minutes)}</span></div>
+      <div class="bar2"><div class="fill" style="width:${100 * m.minutes / maxM}%"></div></div>`).join("");
+    const top = d.top_songs.map(s => `<div class="stsong">${esc(title(s.song))}<br><small class="muted">${fmtMin(s.minutes)}</small></div>`).join("");
+    const maxH = Math.max(...d.hours, 0.01), peak = d.hours.indexOf(Math.max(...d.hours));
+    const hb = d.hours.map((m, h) => `<div title="${fmtHour(h)}: ${m} min" style="flex:1;background:#7c5cff;height:${Math.max(2, 60 * m / maxH)}px;border-radius:2px"></div>`).join("");
+    box.innerHTML = `<div class="big">${fmtMin(d.total_minutes)}</div>
       <div class="muted">total listening · ${d.sessions} listening sessions</div>
       <div style="margin-top:16px"><b>Time by mood</b><div style="margin-top:8px">${moodBars}</div></div>
       <div style="margin-top:12px"><b>Top songs</b>${top}</div>
-      <div style="margin-top:16px"><b>Active listening hours</b>
-        <div class="muted">Most active around ${fmtHour(peak)}</div>
-        <div style="display:flex;align-items:flex-end;gap:2px;height:60px;margin-top:8px">${hbars}</div>
-        <div class="row muted"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>11 PM</span></div>
-      </div>`;
-  } catch (e) {
-    statsBox.innerHTML = '<div class="muted">Start the server to see your listening stats.</div>';
-  }
+      <div style="margin-top:16px"><b>Active listening hours</b><div class="muted">Most active around ${fmtHour(peak)}</div>
+        <div style="display:flex;align-items:flex-end;gap:2px;height:60px;margin-top:8px">${hb}</div>
+        <div class="row muted"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>11 PM</span></div></div>`;
+  } catch (e) { box.innerHTML = '<div class="muted">Start the server to see your stats.</div>'; }
 }
-document.getElementById("refresh").onclick = loadStats;
-loadStats();
+$("refresh").onclick = loadStats;
+
+loadLib();
 </script>
 </body>
 </html>

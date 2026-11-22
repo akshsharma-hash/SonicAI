@@ -380,3 +380,191 @@ def analyze(file: UploadFile = File(...)):
 @app.get("/app")
 def web_app():
     return FileResponse(Path(__file__).resolve().parent.parent / "app" / "index.html")
+
+
+@app.get("/studio")
+def studio_page():
+    return FileResponse(Path(__file__).resolve().parent.parent / "app" / "studio.html")
+    
+
+@app.post("/beats")
+def beats(file: UploadFile = File(...)):
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in (".mp3", ".wav", ".flac"):
+        raise HTTPException(400, "Please upload an mp3, wav or flac file")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(file.file.read())
+        path = tmp.name
+    try:
+        y, sr = librosa.load(path, sr=22050)
+        duration = float(len(y) / sr)
+
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        tempo, beat_frames = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
+        beat_times = librosa.frames_to_time(beat_frames, sr=sr)
+        strengths = onset_env[np.clip(beat_frames, 0, len(onset_env) - 1)]
+        strengths = strengths / (strengths.max() + 1e-9) if len(strengths) else strengths
+
+        # most energetic 30-second window = best place to start a short video
+        hop = 512
+        rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+        fps = sr / hop
+        win = int(30 * fps)
+        best = 0.0
+        if len(rms) > win:
+            c = np.cumsum(np.insert(rms, 0, 0))
+            means = (c[win:] - c[:-win]) / win
+            best = int(means.argmax()) / fps
+        if len(beat_times):
+            best = float(beat_times[np.abs(beat_times - best).argmin()])
+        best = max(0.0, min(best, max(0.0, duration - 30)))
+
+        feats = extract(path)
+    finally:
+        os.remove(path)
+
+    mood = str(model.predict(pd.DataFrame([feats])[feature_cols])[0])
+    return {
+        "duration": round(duration, 2),
+        "tempo": round(float(np.atleast_1d(tempo)[0])),
+        "mood": mood,
+        "beats": [round(float(t), 3) for t in beat_times],
+        "strengths": [round(float(s), 3) for s in strengths],
+        "best_start": round(best, 2),
+    }
+
+
+@app.get("/lyrics")
+def lyrics_page():
+    return FileResponse(Path(__file__).resolve().parent.parent / "app" / "lyrics.html")
+
+
+# ---------- Library upgrade: upload, favorites, recent, similar ----------
+upload_lock = threading.Lock()
+
+db.execute("CREATE TABLE IF NOT EXISTS favorites (song TEXT PRIMARY KEY)")
+db.commit()
+
+
+class FavItem(BaseModel):
+    song: str
+
+
+@app.get("/library")
+def library_list():
+    with db_lock:
+        favs = {r[0] for r in db.execute("SELECT song FROM favorites").fetchall()}
+    return [
+        {
+            "song": s["song"],
+            "mood": s["mood"],
+            "tempo": round(s["tempo"]),
+            "seconds": round(s["seconds"]),
+            "fav": s["song"] in favs,
+            "url": "/audio/" + quote(s["song"], safe=""),
+        }
+        for s in sorted(library, key=lambda x: x["song"].lower())
+    ]
+
+
+@app.get("/recent")
+def recent_songs():
+    with db_lock:
+        rows = db.execute(
+            "SELECT song, MAX(played_at) AS t FROM plays GROUP BY song ORDER BY t DESC LIMIT 20"
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+@app.post("/favorite")
+def toggle_favorite(item: FavItem):
+    with db_lock:
+        row = db.execute("SELECT 1 FROM favorites WHERE song = ?", (item.song,)).fetchone()
+        if row:
+            db.execute("DELETE FROM favorites WHERE song = ?", (item.song,))
+            fav = False
+        else:
+            db.execute("INSERT INTO favorites (song) VALUES (?)", (item.song,))
+            fav = True
+        db.commit()
+    return {"song": item.song, "fav": fav}
+
+
+@app.get("/similar")
+def similar_to(song: str):
+    idx = catalog.index[catalog["song"] == song]
+    if len(idx) == 0:
+        raise HTTPException(404, "Song not in library")
+    sims = cosine_similarity(catalog_X[idx[0]].reshape(1, -1), catalog_X)[0]
+    order = [i for i in sims.argsort()[::-1] if catalog.loc[i, "song"] != song][:5]
+    probs = next((s["probs"] for s in library if s["song"] == song), {})
+    return {
+        "song": song,
+        "probs": {k: round(v, 3) for k, v in probs.items()},
+        "similar": [
+            {
+                "song": catalog.loc[i, "song"],
+                "similarity": round(float(sims[i]), 2),
+                "mood": mood_by_song.get(catalog.loc[i, "song"], ""),
+            }
+            for i in order
+        ],
+    }
+
+
+@app.post("/library/upload")
+def upload_song(file: UploadFile = File(...)):
+    global catalog, catalog_X, dna_df
+    name = Path(file.filename).name
+    suffix = Path(name).suffix.lower()
+    if suffix not in (".mp3", ".wav", ".flac"):
+        raise HTTPException(400, "Please upload an mp3, wav or flac file")
+    if name in library_names:
+        return {"added": False, "song": name, "note": "Already in your library"}
+
+    with upload_lock:
+        dest = DATA / name
+        with open(dest, "wb") as f:
+            f.write(file.file.read())
+        try:
+            feats = extract(dest)
+            seconds = float(librosa.get_duration(path=str(dest)))
+            raw = dna_raw(dest)
+        except Exception as e:
+            dest.unlink(missing_ok=True)
+            raise HTTPException(400, f"Could not read this audio file: {e}")
+
+        # add to the feature table (used by similar songs)
+        row = pd.DataFrame([{"song": name, **feats}])[list(catalog.columns)]
+        catalog = pd.concat([catalog, row], ignore_index=True)
+        row.to_csv(ML / "features.csv", mode="a", header=False, index=False)
+        catalog_X = scaler.transform(catalog[feature_cols])
+
+        # mood of the new song
+        probs = model.predict_proba(row[feature_cols])[0]
+        mood = classes[int(probs.argmax())]
+        library.append(
+            {
+                "song": name,
+                "mood": mood,
+                "probs": dict(zip(classes, map(float, probs))),
+                "tempo": float(feats["tempo"]),
+                "seconds": seconds,
+            }
+        )
+        library_names.add(name)
+        mood_by_song[name] = mood
+        durations[name] = seconds
+        dna_lib[name] = raw
+        dna_df = pd.DataFrame(dna_lib).T
+
+        # remember for the next server start
+        dur_file = DATA / "durations.csv"
+        pd.DataFrame([{"song": name, "seconds": seconds}]).to_csv(
+            dur_file, mode="a", header=not dur_file.exists(), index=False
+        )
+        pd.DataFrame([{"song": name, **raw}])[["song"] + DNA_KEYS].to_csv(
+            DNA_CACHE, mode="a", header=not DNA_CACHE.exists(), index=False
+        )
+    return {"added": True, "song": name, "mood": mood, "tempo": round(float(feats["tempo"]))}

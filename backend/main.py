@@ -375,3 +375,8 @@ def analyze(file: UploadFile = File(...)):
         "similar_songs": similar,
         "dna": {"bpm": round(raw["tempo"]), "scores": dna_scores(raw)},
     }
+
+
+@app.get("/app")
+def web_app():
+    return FileResponse(Path(__file__).resolve().parent.parent / "app" / "index.html")

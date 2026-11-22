@@ -97,7 +97,7 @@
 </div>
 
 <script>
-const BASE = "http://127.0.0.1:8000";
+const BASE = location.protocol === "file:" ? "http://127.0.0.1:8000" : location.origin;
 const API = BASE + "/analyze";
 const player = document.getElementById("player");
 const now = document.getElementById("now");
@@ -111,7 +111,6 @@ const presetEl = document.getElementById("preset");
 const eqNote = document.getElementById("eqnote");
 const dnaBox = document.getElementById("dna");
 const statsBox = document.getElementById("stats");
-
 function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }

@@ -6,7 +6,7 @@
 <title>SonicAI</title>
 <style>
   body { font-family: system-ui, sans-serif; background: #0f0f14; color: #eee;
-         max-width: 560px; margin: 40px auto; padding: 0 16px; }
+         max-width: 560px; margin: 40px auto; padding: 0 16px 60px; }
   h1 { margin-bottom: 4px; }
   .sub { color: #999; margin-bottom: 24px; }
   .card { background: #1b1b25; border-radius: 14px; padding: 18px; margin-top: 16px; }
@@ -27,7 +27,7 @@
   .bar { background: #2b2b3a; border-radius: 6px; height: 10px; margin: 4px 0 10px; }
   .fill { background: #7c5cff; height: 10px; border-radius: 6px; }
   .row { display: flex; justify-content: space-between; font-size: 14px; }
-  .song { font-size: 14px; padding: 6px 0; border-bottom: 1px solid #2b2b3a; }
+  .song { font-size: 14px; padding: 6px 0; border-bottom: 1px solid #2b2b3a; word-break: break-word; }
   .eqrow { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 13px; }
   .eqrow label { width: 52px; color: #aaa; }
   .eqrow input { flex: 1; accent-color: #7c5cff; }
@@ -36,6 +36,9 @@
   #eqnote { color: #9fe3a6; font-size: 13px; margin-top: 8px; }
   #pinfo { color: #9fe3a6; font-size: 13px; margin-top: 10px; }
   #pstatus { color: #ffb86b; font-size: 13px; margin-top: 8px; }
+  .muted { color: #999; font-size: 13px; }
+  .dnavals { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; font-size: 13px; margin-top: 8px; }
+  .big { font-size: 26px; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -44,7 +47,7 @@
 
 <div class="card">
   <b>Smart playlist</b>
-  <div style="color:#999;font-size:13px;margin-top:4px">
+  <div class="muted" style="margin-top:4px">
     Try: "45 minute energetic workout" or "calm songs for studying"
   </div>
   <input type="text" id="pq" placeholder="Describe the playlist you want">
@@ -59,6 +62,11 @@
   <audio id="player" controls crossorigin="anonymous"></audio>
   <br><button id="go">Analyze this song</button>
   <div id="status"></div>
+</div>
+
+<div class="card">
+  <b>Sound DNA</b>
+  <div id="dna" style="margin-top:8px"><div class="muted">Play a song to see its Sound DNA.</div></div>
 </div>
 
 <div class="card">
@@ -80,6 +88,14 @@
 
 <div id="result"></div>
 
+<div class="card">
+  <div class="eqhead">
+    <b>Listening analytics</b>
+    <button class="small" id="refresh">Refresh</button>
+  </div>
+  <div id="stats" style="margin-top:10px"><div class="muted">Loading...</div></div>
+</div>
+
 <script>
 const BASE = "http://127.0.0.1:8000";
 const API = BASE + "/analyze";
@@ -93,6 +109,12 @@ const result = document.getElementById("result");
 const eqEl = document.getElementById("eq");
 const presetEl = document.getElementById("preset");
 const eqNote = document.getElementById("eqnote");
+const dnaBox = document.getElementById("dna");
+const statsBox = document.getElementById("stats");
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
 
 // each track is { name, file } (chosen from your computer) or { name, url } (from the library)
 let tracks = [];
@@ -184,6 +206,31 @@ function setupAudio() {
   node.connect(ctx.destination);
 }
 
+// ---------- Listening log ----------
+let listened = 0;
+let lastT = 0;
+let loggedName = null;
+
+player.ontimeupdate = () => {
+  const d = player.currentTime - lastT;
+  if (d > 0 && d < 1.5) listened += d;
+  lastT = player.currentTime;
+};
+
+function flushLog() {
+  if (loggedName && listened >= 5) {
+    fetch(BASE + "/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ song: loggedName, seconds: listened }),
+      keepalive: true,
+    }).catch(() => {});
+  }
+  listened = 0;
+}
+player.onpause = flushLog;
+window.addEventListener("pagehide", flushLog);
+
 // ---------- Player ----------
 document.getElementById("files").onchange = (e) => {
   tracks = Array.from(e.target.files).map(f => ({ name: f.name, file: f }));
@@ -211,11 +258,15 @@ function renderQueue() {
 }
 
 function play(i) {
+  flushLog();
   setupAudio();
   if (ctx.state === "suspended") ctx.resume();
   if (player.src && player.src.startsWith("blob:")) URL.revokeObjectURL(player.src);
   current = i;
   const t = tracks[i];
+  loggedName = t.name;
+  listened = 0;
+  lastT = 0;
   player.src = t.file ? URL.createObjectURL(t.file) : t.url;
   player.play();
   now.textContent = "Now playing: " + t.name;
@@ -223,11 +274,64 @@ function play(i) {
   status.textContent = "";
   eqNote.textContent = "";
   renderQueue();
+  loadDNA(t.name);
 }
 
 player.onended = () => {
+  flushLog();
+  loadStats();
   if (current + 1 < tracks.length) play(current + 1);
 };
+
+// ---------- Sound DNA ----------
+const DNA_LABELS = {
+  energy: "Energy", brightness: "Brightness", bass: "Bass",
+  vocal: "Vocals", rhythm: "Rhythm", tempo: "Tempo",
+};
+
+function radarSVG(scores) {
+  const keys = Object.keys(DNA_LABELS);
+  const cx = 130, cy = 120, R = 80;
+  const pt = (i, v) => {
+    const a = -Math.PI / 2 + i * 2 * Math.PI / keys.length;
+    return [cx + R * v / 100 * Math.cos(a), cy + R * v / 100 * Math.sin(a)];
+  };
+  let grid = "";
+  [25, 50, 75, 100].forEach(l => {
+    grid += `<polygon points="${keys.map((_, i) => pt(i, l).join(",")).join(" ")}" fill="none" stroke="#2b2b3a"/>`;
+  });
+  const axes = keys.map((_, i) => {
+    const [x, y] = pt(i, 100);
+    return `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="#2b2b3a"/>`;
+  }).join("");
+  const poly = keys.map((k, i) => pt(i, scores[k]).join(",")).join(" ");
+  const labels = keys.map((k, i) => {
+    const [x, y] = pt(i, 122);
+    return `<text x="${x}" y="${y}" fill="#aaa" font-size="11" text-anchor="middle" dominant-baseline="middle">${DNA_LABELS[k]}</text>`;
+  }).join("");
+  return `<svg viewBox="0 0 260 240" width="100%" style="max-width:300px;display:block;margin:0 auto">
+    ${grid}${axes}<polygon points="${poly}" fill="#7c5cff55" stroke="#7c5cff" stroke-width="2"/>${labels}</svg>`;
+}
+
+function renderDNA(scores, bpm) {
+  const vals = Object.keys(DNA_LABELS)
+    .map(k => `<div class="row"><span>${DNA_LABELS[k]}</span><span>${scores[k]}</span></div>`).join("");
+  dnaBox.innerHTML = radarSVG(scores) +
+    `<div class="dnavals">${vals}</div>
+     <div class="muted" style="margin-top:8px">${bpm} BPM · scores are relative to your library (0-100)</div>`;
+}
+
+async function loadDNA(name) {
+  dnaBox.innerHTML = '<div class="muted">Loading Sound DNA...</div>';
+  try {
+    const res = await fetch(BASE + "/dna?song=" + encodeURIComponent(name));
+    if (!res.ok) throw new Error("not in library");
+    const d = await res.json();
+    if (tracks[current] && tracks[current].name === name) renderDNA(d.scores, d.bpm);
+  } catch (e) {
+    dnaBox.innerHTML = '<div class="muted">Press "Analyze this song" to compute its Sound DNA.</div>';
+  }
+}
 
 // ---------- Smart playlist ----------
 const pq = document.getElementById("pq");
@@ -263,7 +367,7 @@ pq.onkeydown = (e) => { if (e.key === "Enter") makePlaylist(); };
 go.onclick = async () => {
   if (current < 0) { status.textContent = "Choose songs or create a playlist first."; return; }
   go.disabled = true;
-  status.textContent = "Analyzing... (10-20 seconds)";
+  status.textContent = "Analyzing... (20-40 seconds)";
   result.innerHTML = "";
   try {
     const t = tracks[current];
@@ -286,12 +390,14 @@ function show(d) {
     .map(([m, p]) => `<div class="row"><span>${m}</span><span>${Math.round(p*100)}%</span></div>
       <div class="bar"><div class="fill" style="width:${p*100}%"></div></div>`).join("");
   const sims = d.similar_songs
-    .map(s => `<div class="song">${s.song}<br><small>similarity ${s.similarity}</small></div>`).join("");
+    .map(s => `<div class="song">${esc(s.song)}<br><small>similarity ${s.similarity}</small></div>`).join("");
   result.innerHTML = `
     <div class="card"><div class="mood">${d.mood}</div>
-      <div style="color:#999">${d.tempo_bpm} BPM</div></div>
+      <div class="muted">${d.tempo_bpm} BPM</div></div>
     <div class="card"><b>Mood breakdown</b><div style="margin-top:10px">${bars}</div></div>
     <div class="card"><b>Similar songs in your library</b>${sims}</div>`;
+
+  if (d.dna) renderDNA(d.dna.scores, d.dna.bpm);
 
   // AI EQ: pick a preset from the detected mood
   const preset = MOOD_PRESET[d.mood];
@@ -300,6 +406,54 @@ function show(d) {
     eqNote.textContent = "AI EQ applied: " + preset + " (detected mood: " + d.mood + ")";
   }
 }
+
+// ---------- Listening analytics ----------
+function fmtMin(m) {
+  const h = Math.floor(m / 60);
+  const mm = Math.round(m % 60);
+  return h ? `${h}h ${mm}m` : `${mm}m`;
+}
+function fmtHour(h) {
+  const ap = h < 12 ? "AM" : "PM";
+  const x = h % 12 === 0 ? 12 : h % 12;
+  return x + " " + ap;
+}
+
+async function loadStats() {
+  try {
+    const res = await fetch(BASE + "/stats");
+    if (!res.ok) throw new Error("Server error " + res.status);
+    const d = await res.json();
+    if (!d.sessions) {
+      statsBox.innerHTML = '<div class="muted">No listening history yet. Play a few songs (5+ seconds each) and press Refresh.</div>';
+      return;
+    }
+    const maxM = Math.max(...d.moods.map(m => m.minutes), 0.01);
+    const moodBars = d.moods.map(m => `
+      <div class="row"><span style="text-transform:capitalize">${esc(m.mood)}</span><span>${fmtMin(m.minutes)}</span></div>
+      <div class="bar"><div class="fill" style="width:${100 * m.minutes / maxM}%"></div></div>`).join("");
+    const top = d.top_songs.map(s =>
+      `<div class="song">${esc(s.song)}<br><small>${fmtMin(s.minutes)}</small></div>`).join("");
+    const maxH = Math.max(...d.hours, 0.01);
+    const peak = d.hours.indexOf(Math.max(...d.hours));
+    const hbars = d.hours.map((m, h) =>
+      `<div title="${fmtHour(h)}: ${m} min" style="flex:1;background:#7c5cff;height:${Math.max(2, 60 * m / maxH)}px;border-radius:2px"></div>`).join("");
+    statsBox.innerHTML = `
+      <div class="big">${fmtMin(d.total_minutes)}</div>
+      <div class="muted">total listening · ${d.sessions} listening sessions</div>
+      <div style="margin-top:16px"><b>Time by mood</b><div style="margin-top:8px">${moodBars}</div></div>
+      <div style="margin-top:12px"><b>Top songs</b>${top}</div>
+      <div style="margin-top:16px"><b>Active listening hours</b>
+        <div class="muted">Most active around ${fmtHour(peak)}</div>
+        <div style="display:flex;align-items:flex-end;gap:2px;height:60px;margin-top:8px">${hbars}</div>
+        <div class="row muted"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>11 PM</span></div>
+      </div>`;
+  } catch (e) {
+    statsBox.innerHTML = '<div class="muted">Start the server to see your listening stats.</div>';
+  }
+}
+document.getElementById("refresh").onclick = loadStats;
+loadStats();
 </script>
 </body>
 </html>

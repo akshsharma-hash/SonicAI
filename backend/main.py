@@ -1,16 +1,21 @@
 import os
 import re
+import sqlite3
 import sys
 import tempfile
+import threading
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
 import joblib
 import librosa
+import numpy as np
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import StandardScaler
 
@@ -76,7 +81,104 @@ for i, s in enumerate(catalog["song"]):
         }
     )
 library_names = {s["song"] for s in library}
+mood_by_song = {s["song"]: s["mood"] for s in library}
 print("Library ready:", len(library), "songs")
+
+
+# ---------- Sound DNA ----------
+DNA_KEYS = ["energy", "brightness", "bass", "vocal", "rhythm", "tempo"]
+DNA_CACHE = DATA / "dna.csv"
+
+
+def dna_raw(path):
+    y, sr = librosa.load(str(path), duration=45)
+    S = np.abs(librosa.stft(y, n_fft=2048))
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
+    power = S ** 2
+    total = power.sum() + 1e-9
+    bass = power[(freqs >= 20) & (freqs < 250)].sum() / total
+    vocal = power[(freqs >= 300) & (freqs < 3400)].sum() / total
+    energy = float(librosa.feature.rms(S=S).mean())
+    brightness = float(librosa.feature.spectral_centroid(S=S, sr=sr).mean())
+
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+    tempo, beats = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
+    times = librosa.frames_to_time(beats, sr=sr)
+    if len(times) > 4:
+        gaps = np.diff(times)
+        rhythm = float(max(0.0, 1.0 - gaps.std() / (gaps.mean() + 1e-9)))
+    else:
+        rhythm = 0.0
+
+    return {
+        "energy": energy,
+        "brightness": brightness,
+        "bass": float(bass),
+        "vocal": float(vocal),
+        "rhythm": rhythm,
+        "tempo": float(np.atleast_1d(tempo)[0]),
+    }
+
+
+def load_dna():
+    known = {}
+    if DNA_CACHE.exists():
+        d = pd.read_csv(DNA_CACHE)
+        for _, r in d.iterrows():
+            known[r["song"]] = {k: float(r[k]) for k in DNA_KEYS}
+    missing = [s["song"] for s in library if s["song"] not in known]
+    changed = False
+    for n, s in enumerate(missing, 1):
+        print(f"  Sound DNA {n}/{len(missing)}: {s[:50]}")
+        try:
+            known[s] = dna_raw(DATA / s)
+            changed = True
+        except Exception as e:
+            print("   skipped:", e)
+    if changed:
+        rows = [{"song": s, **v} for s, v in known.items()]
+        pd.DataFrame(rows).to_csv(DNA_CACHE, index=False)
+    return known
+
+
+print("Computing Sound DNA (only new songs, first time takes a few minutes)...")
+dna_lib = load_dna()
+dna_df = pd.DataFrame(dna_lib).T if dna_lib else pd.DataFrame(columns=DNA_KEYS)
+print("Sound DNA ready:", len(dna_lib), "songs")
+
+
+def dna_scores(raw):
+    """Turn raw values into 0-100 scores relative to your library."""
+    out = {}
+    for k in DNA_KEYS:
+        if k == "tempo":
+            lo, hi = 60.0, 180.0
+        elif len(dna_df):
+            lo, hi = float(dna_df[k].min()), float(dna_df[k].max())
+        else:
+            lo, hi = 0.0, 1.0
+        if hi - lo < 1e-9:
+            out[k] = 50
+        else:
+            out[k] = int(round(100 * min(1.0, max(0.0, (raw[k] - lo) / (hi - lo)))))
+    return out
+
+
+# ---------- Listening history (SQLite) ----------
+DB_PATH = DATA / "listening.db"
+db = sqlite3.connect(DB_PATH, check_same_thread=False)
+db_lock = threading.Lock()
+db.execute(
+    "CREATE TABLE IF NOT EXISTS plays ("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, song TEXT, mood TEXT, "
+    "seconds REAL, played_at TEXT)"
+)
+db.commit()
+
+
+class LogItem(BaseModel):
+    song: str
+    seconds: float
 
 
 # ---------- Simple NLP: understand playlist requests ----------
@@ -118,6 +220,7 @@ def parse_request(q: str):
     return moods, tmin, tmax, (total or None)
 
 
+# ---------- Endpoints ----------
 @app.get("/")
 def health():
     return {"status": "SonicAI API is running"}
@@ -128,6 +231,59 @@ def audio(name: str):
     if name not in library_names:
         raise HTTPException(404, "Song not found")
     return FileResponse(DATA / name)
+
+
+@app.get("/dna")
+def dna(song: str):
+    if song not in dna_lib:
+        raise HTTPException(404, "Song not in library")
+    raw = dna_lib[song]
+    return {"song": song, "bpm": round(raw["tempo"]), "scores": dna_scores(raw)}
+
+
+@app.post("/log")
+def log_play(item: LogItem):
+    if item.seconds < 5:
+        return {"saved": False}
+    with db_lock:
+        db.execute(
+            "INSERT INTO plays (song, mood, seconds, played_at) VALUES (?, ?, ?, ?)",
+            (
+                item.song,
+                mood_by_song.get(item.song, "unknown"),
+                round(min(item.seconds, 3600.0), 1),
+                datetime.now().isoformat(timespec="seconds"),
+            ),
+        )
+        db.commit()
+    return {"saved": True}
+
+
+@app.get("/stats")
+def stats():
+    with db_lock:
+        total_s, sessions = db.execute(
+            "SELECT COALESCE(SUM(seconds), 0), COUNT(*) FROM plays"
+        ).fetchone()
+        moods = db.execute(
+            "SELECT mood, SUM(seconds) AS s FROM plays GROUP BY mood ORDER BY s DESC"
+        ).fetchall()
+        songs = db.execute(
+            "SELECT song, SUM(seconds) AS s FROM plays GROUP BY song ORDER BY s DESC LIMIT 5"
+        ).fetchall()
+        hrs = db.execute(
+            "SELECT strftime('%H', played_at) AS h, SUM(seconds) FROM plays GROUP BY h"
+        ).fetchall()
+    hours = [0.0] * 24
+    for h, s in hrs:
+        hours[int(h)] = round(s / 60, 1)
+    return {
+        "total_minutes": round(total_s / 60, 1),
+        "sessions": sessions,
+        "moods": [{"mood": m, "minutes": round(s / 60, 1)} for m, s in moods],
+        "top_songs": [{"song": n, "minutes": round(s / 60, 1)} for n, s in songs],
+        "hours": hours,
+    }
 
 
 @app.get("/playlist")
@@ -191,6 +347,7 @@ def analyze(file: UploadFile = File(...)):
         path = tmp.name
     try:
         feats = extract(path)
+        raw = dna_raw(path)
     finally:
         os.remove(path)
 
@@ -216,4 +373,5 @@ def analyze(file: UploadFile = File(...)):
         "mood": mood,
         "mood_probabilities": mood_probs,
         "similar_songs": similar,
+        "dna": {"bpm": round(raw["tempo"]), "scores": dna_scores(raw)},
     }
